@@ -25,17 +25,16 @@ class OpacityCurveCanvas(FigureCanvas):
         self.display_points = True
         self.dragging_point_index = None
         self.selected_point_index = None
-        self.point_artists = []
 
         self.x_min, self.x_max = x_range
-        self.points = (
-            points
-            if points is not None
-            else [(self.x_min, 0.0, (0, 0, 1)), (self.x_max, 1.0, (1, 0, 0))]
-        )
+        self.points = points or [
+            (self.x_min, 0.0, (0, 0, 1)),
+            (self.x_max, 1.0, (1, 0, 0)),
+        ]
         self.curve_list = curve_list if curve_list is not None else []
         self.normal_lines = []
         self.box_list = []
+        self.scatter = None
         self._init_plot()
         self._connect_events()
 
@@ -51,6 +50,7 @@ class OpacityCurveCanvas(FigureCanvas):
         self.update_points(self.points)
 
     def _connect_events(self):
+        self.mpl_connect("pick_event", self._on_pick)
         self.mpl_connect("button_press_event", self._on_click)
         self.mpl_connect("motion_notify_event", self._on_drag)
         self.mpl_connect("button_release_event", self._on_release)
@@ -81,32 +81,37 @@ class OpacityCurveCanvas(FigureCanvas):
             print(dist)
         return None
 
-    def _on_click(self, event):
-        if not self.display_points or event.inaxes != self.ax:
+    def _on_pick(self, evt):
+        if not self.display_points or evt.artist is not self.scatter:
             return
-        x, y = event.xdata, event.ydata
-        if x is None or y is None:
-            return
-        idx = self._find_nearest_point(event.x, event.y)
-        if event.button == 3:
-            if idx is not None and idx != 0 and idx != len(self.points) - 1:
-                del self.points[idx]
+        idx = int(evt.ind[0])
+        mouse = evt.mouseevent
+        if mouse.button == 1:  # 左鍵拖曳起點
+            self.dragging_point_index = idx
+            self.selected_point_index = idx
+        elif mouse.button == 3:  # 右鍵刪除
+            if idx not in (0, len(self.points) - 1):
+                self.points.pop(idx)
                 self.selected_point_index = None
-        if event.button == 1:
-            if idx is not None:
-                self.dragging_point_index = idx
-                self.selected_point_index = idx
-            else:
-                # clamp 新增點在 (x_min, x_max)
-                x = min(max(x, self.x_min + 1e-6), self.x_max - 1e-6)
-                y = min(max(y, 0.0), 1.0)
-                default_color = (0.3, 0.6, 0.9)
-                self.points.append((x, y, default_color))
-                self.points.sort(key=lambda p: p[0])
-                self.selected_point_index = self.points.index(
-                    min(self.points, key=lambda p: abs(p[0] - x) + abs(p[1] - y))
-                )
-        self._notify_change()
+                self._notify_change()
+
+    def _on_click(self, evt):
+        if not (self.display_points and evt.inaxes == self.ax and evt.button == 1):
+            return
+        # 若不是點在既有點上（pick_event 不會設定 dragging_idx），就新增
+        if (
+            self.dragging_point_index is None
+            and evt.xdata is not None
+            and evt.ydata is not None
+        ):
+            x = np.clip(evt.xdata, self.x_min + 1e-6, self.x_max - 1e-6)
+            y = np.clip(evt.ydata, 0.0, 1.0)
+            self.points.append((x, y, (0.3, 0.6, 0.9)))
+            self.points.sort(key=lambda p: p[0])
+            self.selected_point_index = self.points.index(
+                min(self.points, key=lambda p: abs(p[0] - x) + abs(p[1] - y))
+            )
+            self._notify_change()
 
     def _on_drag(self, event):
         if self.dragging_point_index is not None and event.inaxes == self.ax:
@@ -166,7 +171,7 @@ class OpacityCurveCanvas(FigureCanvas):
         if not self.points:
             return
         # 2. 拆解 x/y/color
-        xs, ys, cs = self._extract_xyc(self.points)
+        xs, ys, cs = map(np.array, zip(*points))
         # 3. 更新主曲線
         self._update_line_collection(xs, ys)
         # 4. 更新點標記
@@ -212,22 +217,18 @@ class OpacityCurveCanvas(FigureCanvas):
 
     def _update_point_artists(self, xs, ys, cs):
         # 先移除舊的 artist
-        for artist in self.point_artists:
-            artist.remove()
-        self.point_artists = []
-        for i, (x_, y_, c) in enumerate(zip(xs, ys, cs)):
-            size = 100 if i == self.selected_point_index else 50
-            edge_color = "white" if i == self.selected_point_index else c
-            artist = self.ax.scatter(
-                x_,
-                y_,
-                s=size,
-                color=[c],
-                edgecolors=[edge_color],
-                linewidths=1.5,
-                zorder=3,
-            )
-            self.point_artists.append(artist)
+        if self.scatter:
+            self.scatter.remove()
+        sizes = np.where(
+            np.arange(len(xs)) == (self.selected_point_index or -1), 100, 50
+        )
+        edge = [
+            "white" if i == (self.selected_point_index or -1) else cs[i]
+            for i in range(len(cs))
+        ]
+        self.scatter = self.ax.scatter(
+            xs, ys, s=sizes, c=cs, edgecolors=edge, linewidths=1.5, zorder=3, picker=5
+        )
 
     def _update_curve(self, curve_list):
         # 先清除所有舊 normal 線條
@@ -255,8 +256,9 @@ class OpacityCurveCanvas(FigureCanvas):
                 self.ax.add_patch(rect)
                 self.normal_lines.append(line)
 
-    def _rescale_and_redraw(self):
         self.ax.relim()
+
+    def _rescale_and_redraw(self):
         self.ax.autoscale_view()
         self.draw()
 
