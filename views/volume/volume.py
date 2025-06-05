@@ -79,8 +79,7 @@ class VolumeDock(QDockWidget):
 
         self.opacity_editor.set_range(volume.min(), volume.max())
 
-        # hist, bins = np.histogram(volume, bins=100)
-        # self.histogram_viewer.set_histogram(bins, hist)
+        self.histogram_viewer.set_histogram(volume)
 
         self.status_label.setText(
             f"✅ 成功載入\\nVolume shape: {volume.shape}\\n類型: {img.get_data_dtype()}\\n"
@@ -130,7 +129,7 @@ class VolumeDock(QDockWidget):
         render_window = self.vtk_widget.GetRenderWindow()
         self.renderer.AddVolume(self.volume)
         self.renderer.ResetCamera()
-        # render_window.Render()
+        render_window.Render()
 
     def _add_orientation_marker(self, interactor):
         axes = vtkAxesActor()
@@ -202,11 +201,10 @@ class VolumeDock(QDockWidget):
             "coronal": 1,
             "sagittal": 0,
         }
-        vol = self.volume
-        if vol is None:
+        if self.volume is None or len(slice_dict) == 0:
             return
         bounds = [0] * 6
-        vol.GetBounds(bounds)
+        self.volume.GetBounds(bounds)
         x_min, x_max, y_min, y_max, z_min, z_max = bounds
 
         for view_type, (slice_index, img2d) in slice_dict.items():

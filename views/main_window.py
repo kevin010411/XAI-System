@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
 
     def register_menu_bar(self, view_menu):
         def visibility_handler(dock, visible):
-            if visible:
+            if visible and self.data_manager.get_current() is not None:
                 dock.update(self.data_manager.get_current())
             else:  # TODO 清除視窗內容
                 pass

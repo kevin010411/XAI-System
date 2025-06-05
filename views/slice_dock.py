@@ -83,7 +83,6 @@ class SliceDock(QDockWidget):
             return
 
         # 切片選取
-        idx = {"axial": 0, "coronal": 1, "sagittal": 2}[self.view_type]
         if self.view_type == "axial":
             img = self.volume[self.slice_index, :, :]
             spacing = (self.spacing[1], self.spacing[2])
@@ -135,12 +134,12 @@ class SliceDock(QDockWidget):
         self.ax.set_ylim(center_y - dy, center_y + dy)
         self.ax.set_aspect("equal")
 
-        self.show_slice_in_volume()
         self.canvas.draw()
 
     def toggle_show_slice_in_volume(self):
         self.show_slice = not self.show_slice
         self.render()
+        self.show_slice_in_volume()
 
     def show_slice_in_volume(self):
         if self.show_in_volume_callback and self.volume is not None:
@@ -165,6 +164,7 @@ class SliceDock(QDockWidget):
             self.slice_index + (10 if event.step > 0 else -10), 0, max_idx
         )
         self.render()
+        self.show_slice_in_volume()
 
     def on_press(self, event):
         if event.button in [1, 3]:
