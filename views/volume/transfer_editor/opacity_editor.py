@@ -55,6 +55,8 @@ class OpacityEditor(QWidget):
 
     def _update_plot(self):
         self.canvas.update_points(self.points, self.curve_list)
+        if self.on_update_callback:
+            self.on_update_callback()
 
     def _on_canvas_updated(self, updated_points):
         self.points = updated_points
@@ -66,6 +68,7 @@ class OpacityEditor(QWidget):
         self.min_val = min_val
         self.max_val = max_val
         self.canvas.set_range(min_val, max_val)
+        self.points = self.canvas.points
 
     def get_points(self):
         return self.points
@@ -84,8 +87,6 @@ class OpacityEditor(QWidget):
             return
         self.points = [self.points[0], self.points[-1]]
         self._update_plot()
-        if self.on_update_callback:
-            self.on_update_callback()
 
     def generate_normal_distribution(self):
         mean = (self.min_val + self.max_val) / 2
@@ -119,5 +120,3 @@ class OpacityEditor(QWidget):
         #     self.is_merged = False
 
         self._update_plot()
-        if self.on_update_callback:
-            self.on_update_callback()

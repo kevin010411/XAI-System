@@ -86,7 +86,7 @@ class OpacityCurveCanvas(FigureCanvas):
             and evt.xdata is not None
             and evt.ydata is not None
         ):
-            x = np.clip(evt.xdata, self.x_min + 1e-6, self.x_max - 1e-6)
+            x = round(np.clip(evt.xdata, self.x_min + 1e-6, self.x_max - 1e-6), 4)
             y = np.clip(evt.ydata, 0.0, 1.0)
             self.points.append((x, y, (0.3, 0.6, 0.9)))
             self.points.sort(key=lambda p: p[0])

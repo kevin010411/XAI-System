@@ -114,7 +114,6 @@ class VolumeDock(QDockWidget):
 
         self.volume_color = vtk.vtkColorTransferFunction()
         self.volume_scalar_opacity = vtk.vtkPiecewiseFunction()
-        self.update_transfer_function()
 
         self.volume_property = vtk.vtkVolumeProperty()
         self.volume_property.SetColor(self.volume_color)
@@ -129,7 +128,7 @@ class VolumeDock(QDockWidget):
         render_window = self.vtk_widget.GetRenderWindow()
         self.renderer.AddVolume(self.volume)
         self.renderer.ResetCamera()
-        render_window.Render()
+        self.update_transfer_function()
 
     def _add_orientation_marker(self, interactor):
         axes = vtkAxesActor()
@@ -176,15 +175,6 @@ class VolumeDock(QDockWidget):
         if self.vtk_widget.GetRenderWindow():
             self.vtk_widget.GetRenderWindow().Render()
 
-    def reset_camera_to(self, position, view_up=(0, 0, 1)):
-        if self.renderer:
-            camera = self.renderer.GetActiveCamera()
-            camera.SetPosition(*position)
-            camera.SetFocalPoint(0, 0, 0)
-            camera.SetViewUp(*view_up)
-            self.renderer.ResetCamera()
-            self.vtk_widget.GetRenderWindow().Render()
-
     def show_slice_plane(self, slice_dict, opacity=1.0):
         """
         同時顯示多個方向的切片平面。
@@ -201,8 +191,13 @@ class VolumeDock(QDockWidget):
             "coronal": 1,
             "sagittal": 0,
         }
-        if self.volume is None or len(slice_dict) == 0:
+
+        if self.volume is None:
             return
+        if len(slice_dict) == 0:
+            self.vtk_widget.GetRenderWindow().Render()
+            return
+
         bounds = [0] * 6
         self.volume.GetBounds(bounds)
         x_min, x_max, y_min, y_max, z_min, z_max = bounds
