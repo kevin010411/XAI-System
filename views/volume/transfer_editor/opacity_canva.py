@@ -7,8 +7,7 @@ import numpy as np
 """
 以下class還有需要優化的部分
 1. 超過200行需要優化
-2. 目前click事件是對所有FigureCanvas都有效，但實際上使用picker來選擇點會更簡單
-3. 曲線目前沒辦法移動與控制大小
+2. 曲線目前沒辦法移動與控制大小
 """
 
 
@@ -38,48 +37,27 @@ class OpacityCurveCanvas(FigureCanvas):
         self._init_plot()
         self._connect_events()
 
-    def _init_plot(self):
-        self.fig.tight_layout(pad=0)
-        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    def _style_ax(self):
         self.ax.margins(0)
         self.ax.set_xticks([])
         self.ax.set_yticks([])
+        for spine in self.ax.spines.values():
+            spine.set_visible(False)
+        self.ax.axis("off")
+
+    def _init_plot(self):
+        self.fig.tight_layout(pad=0)
+        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
         self.line_collection = LineCollection([], linewidths=2, colors="black")
         self.ax.add_collection(self.line_collection)
+        self._style_ax()
         self.set_range(self.x_min, self.x_max)
-        self.update_points(self.points)
 
     def _connect_events(self):
         self.mpl_connect("pick_event", self._on_pick)
         self.mpl_connect("button_press_event", self._on_click)
         self.mpl_connect("motion_notify_event", self._on_drag)
         self.mpl_connect("button_release_event", self._on_release)
-
-    def _find_nearest_point(self, x, y, threshold=15):
-        points_disp = np.array(
-            [self.ax.transData.transform((px, py)) for px, py, _ in self.points]
-        )
-        dists = np.sqrt((points_disp[:, 0] - x) ** 2 + (points_disp[:, 1] - y) ** 2)
-        min_idx = np.argmin(dists)
-        if dists[min_idx] < threshold * (self.x_max - self.x_min):
-            return int(min_idx)
-        return None
-
-    def _find_nearest_box(self, x, y, threshold=15):
-        """
-        此function目前沒有被使用
-        """
-        for i, box in enumerate(self.box_list):
-            # box 為 matplotlib Rectangle patch, center xy
-            bbox = box.get_bbox()
-            cx, cy = bbox.x0 + bbox.width / 2, bbox.y0 + bbox.height / 2
-            bx, by = self.ax.transData.transform((cx, cy))
-            dist = np.sqrt((bx - x) ** 2 + (by - y) ** 2)
-            if dist < min_dist and dist < threshold:
-                nearest = {"type": "box", "curve_idx": i, "box": box}
-                min_dist = dist
-            print(dist)
-        return None
 
     def _on_pick(self, evt):
         if not self.display_points or evt.artist is not self.scatter:
@@ -89,6 +67,7 @@ class OpacityCurveCanvas(FigureCanvas):
         if mouse.button == 1:  # 左鍵拖曳起點
             self.dragging_point_index = idx
             self.selected_point_index = idx
+            self._notify_change()
         elif mouse.button == 3:  # 右鍵刪除
             if idx not in (0, len(self.points) - 1):
                 self.points.pop(idx)
@@ -96,6 +75,9 @@ class OpacityCurveCanvas(FigureCanvas):
                 self._notify_change()
 
     def _on_click(self, evt):
+        """
+        只處理左鍵 + 在軸內 + 未 pick 到點 的情況：新增控制點
+        """
         if not (self.display_points and evt.inaxes == self.ax and evt.button == 1):
             return
         # 若不是點在既有點上（pick_event 不會設定 dragging_idx），就新增
@@ -114,48 +96,44 @@ class OpacityCurveCanvas(FigureCanvas):
             self._notify_change()
 
     def _on_drag(self, event):
-        if self.dragging_point_index is not None and event.inaxes == self.ax:
-            x, y = event.xdata, event.ydata
-            if x is None or y is None:
-                return
-            y = min(max(y, 0.0), 1.0)
-            idx = self.dragging_point_index
-            if idx == 0:
-                x = self.x_min
-            elif idx == len(self.points) - 1:
-                x = self.x_max
-            else:
-                # clamp 拖曳點在 (x_min, x_max)
-                x = min(max(x, self.x_min + 1e-6), self.x_max - 1e-6)
-                left = self.points[idx - 1][0] + 1e-4 if idx > 0 else self.x_min
-                right = (
-                    self.points[idx + 1][0] - 1e-4
-                    if idx < len(self.points) - 1
-                    else self.x_max
-                )
-                x = min(max(x, left), right)
-            self.points = self.set_point(idx, x, y)
-            self.selected_point_index = self.points.index(
-                min(self.points, key=lambda p: abs(p[0] - x) + abs(p[1] - y))
+        # 若無拖曳點或滑鼠不在軸內直接返回
+        if self.dragging_point_index is None or event.inaxes != self.ax:
+            return
+
+        x, y = event.xdata, np.clip(event.ydata, 0.0, 1.0)
+
+        idx = self.dragging_point_index
+        if idx == 0:
+            x = self.x_min
+        elif idx == len(self.points) - 1:
+            x = self.x_max
+        else:
+            # clamp 拖曳點在 (x_min, x_max)
+            x = min(max(x, self.x_min + 1e-6), self.x_max - 1e-6)
+            left = self.points[idx - 1][0] + 1e-4 if idx > 0 else self.x_min
+            right = (
+                self.points[idx + 1][0] - 1e-4
+                if idx < len(self.points) - 1
+                else self.x_max
             )
-            self._notify_change()
+            x = min(max(x, left), right)
+        self.set_point(idx, x, y)
+        self._notify_change()
 
     def _on_release(self, event):
         if self.dragging_point_index is not None and event.ydata is None:
             x_point = self.points[self.selected_point_index][0]
             if event.y > 0:
-                self.points = self.set_point(self.selected_point_index, x_point, 1)
+                self.set_point(self.selected_point_index, x_point, 1)
             elif event.y < 0:
-                self.points = self.set_point(self.selected_point_index, x_point, 0)
+                self.set_point(self.selected_point_index, x_point, 0)
             self._notify_change()
 
         self.dragging_point_index = None
 
     def set_point(self, select_index, new_x, new_y):
-        new_points = list(self.points)
-        _, _, color = new_points[select_index]
-        new_points[select_index] = (new_x, new_y, color)
-        return sorted(new_points, key=lambda p: p[0])
+        _, _, color = self.points[select_index]
+        self.points[select_index] = (new_x, new_y, color)
 
     def _notify_change(self):
         self.update_points(self.points, self.curve_list)
@@ -180,33 +158,6 @@ class OpacityCurveCanvas(FigureCanvas):
         self._update_curve(curve_list)
         # 6. 強制刷新
         self._rescale_and_redraw()
-
-    def adjust_points_proportionally(self, points, old_xmin, old_xmax):
-        """
-        回傳依比例調整 x 座標的新 points
-        """
-        new_points = []
-        for i, (x, y, c) in enumerate(points):
-            if i == 0:
-                new_x = self.x_min
-            elif i == len(points) - 1:
-                new_x = self.x_max
-            else:
-                if old_xmax > old_xmin:
-                    ratio = (x - old_xmin) / (old_xmax - old_xmin)
-                else:
-                    ratio = 0.0
-                new_x = self.x_min + ratio * (self.x_max - self.x_min)
-            new_points.append((new_x, y, c))
-        return new_points
-
-    def _extract_xyc(self, points):
-        xs, ys, cs = [], [], []
-        for x, y, c in points:
-            xs.append(x)
-            ys.append(y)
-            cs.append(c)
-        return xs, ys, cs
 
     def _update_line_collection(self, xs, ys):
         segments = [
@@ -263,14 +214,28 @@ class OpacityCurveCanvas(FigureCanvas):
         self.draw()
 
     def set_range(self, min_val, max_val):
-        old_xmin, old_xmax = self.x_min, self.x_max
-        self.x_min, self.x_max = min_val, max_val
         self.ax.set_xlim(min_val, max_val)
         self.ax.set_ylim(0, 1)
+
+        old_xmin, old_xmax = self.x_min, self.x_max
+        self.x_min, self.x_max = min_val, max_val
+        ratio = (np.array([x for x, _, _ in self.points]) - old_xmin) / (
+            old_xmax - old_xmin or 1
+        )
+
+        def reproject(i, x, y, c, r):
+            if i == 0:  # 左端
+                return (self.x_min, y, c)
+            if i == len(self.points) - 1:  # 右端
+                return (self.x_max, y, c)
+            return (self.x_min + r * (self.x_max - self.x_min), y, c)
+
         # 同步端點 x 座標（保持左右端點為 x_min, x_max，內部點依比例調整）
-        self.points = self.adjust_points_proportionally(self.points, old_xmin, old_xmax)
+        self.points = [
+            reproject(i, x, y, c, r)
+            for i, ((x, y, c), r) in enumerate(zip(self.points, ratio))
+        ]
         self.update_points(self.points)
-        self.draw()
 
     def get_normal_y(self, x, normal_mean, normal_std):
         """
