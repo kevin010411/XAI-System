@@ -4,7 +4,10 @@ import numpy as np
 import torch
 import nibabel as nib
 from custom_module.utils import build_model, build_transform
+
 from monai.inferers import sliding_window_inference
+
+# from custom_module.utils.inference import sliding_window_inference
 
 
 def parse_args():
@@ -34,7 +37,7 @@ if __name__ == "__main__":
     checkpoint_path = "./weights/exp_12_4_4_3/best_model.pth"
     checkpoint = torch.load(checkpoint_path)
     model.load_state_dict(checkpoint["state_dict"])
-    img = load_nii_gz("../../data/dataset_3/pid_02/pid_02.nii.gz")
+    img = load_nii_gz("../../../data/dataset_3/pid_02/pid_02.nii.gz")
     transform_img, transform_data = transform(img, img.get_fdata())
     transform_data = (
         (transform_data[None, None, ...]).to("cuda").to(torch.float32)
@@ -46,6 +49,7 @@ if __name__ == "__main__":
             sw_batch_size=1,
             predictor=model,
             overlap=0.25,
+            progress=True,
         )
         pred = torch.where(torch.nn.functional.softmax(pred, dim=1) > 0.5, 1, 0).cpu()
         pred_np = pred[0].cpu().numpy()
