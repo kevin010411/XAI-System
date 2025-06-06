@@ -1,8 +1,7 @@
 from .util import wrap_with_frame, profile
-from .loading_overlay import LoadingOverlay
+from .qtspinner import *
 
 __all__ = [
     "profile",
     "wrap_with_frame",
-    "LoadingOverlay",
 ]
