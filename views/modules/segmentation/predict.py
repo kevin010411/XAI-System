@@ -5,9 +5,9 @@ import torch
 import nibabel as nib
 from custom_module.utils import build_model, build_transform
 
-from monai.inferers import sliding_window_inference
+# from monai.inferers import sliding_window_inference
 
-# from custom_module.utils.inference import sliding_window_inference
+from custom_module.utils.inference import sliding_window_inference
 
 
 def parse_args():

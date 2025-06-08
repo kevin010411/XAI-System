@@ -24,9 +24,10 @@ import torch
 import torch.nn.functional as F
 
 try:
-    from tqdm.auto import tqdm  # 自動決定 console / notebook
-except ImportError:  # 沒裝 tqdm 亦可運作
-    tqdm = None
+    # Automatically chooses rich progress bar in notebook / console.
+    from tqdm.auto import tqdm
+except ImportError:  # Fallback: still works without tqdm.
+    tqdm = None  # type: ignore
 
 __all__ = ["sliding_window_inference"]
 
@@ -35,11 +36,22 @@ __all__ = ["sliding_window_inference"]
 # -------------------------------------------------------------------------- #
 
 
-# A. fall back ROI size: treat <=0 或 None 為沿用對應影像大小
 def _fallback_roi_size(
     roi_size: Sequence[int] | int,
     img_size: Sequence[int],
 ) -> Tuple[int, ...]:
+    """Replace non‑positive entries in ``roi_size`` with ``img_size``.
+
+    Args:
+        roi_size: Target ROI size per spatial dimension.  If an ``int`` is
+            given it is broadcast to all spatial dimensions.  Values that are
+            ``None`` or ``<= 0`` mean *use the full image size* for that
+            dimension.
+        img_size: Spatial shape of the input image (H, W, [D, ...]).
+
+    Returns:
+        A tuple of ints with the same length as ``img_size``.
+    """
     if isinstance(roi_size, int):
         roi_size = (roi_size,) * len(img_size)
     if len(roi_size) != len(img_size):
@@ -52,7 +64,6 @@ def _fallback_roi_size(
     return roi_size
 
 
-# B. importance map（constant / gaussian）──與 MONAI 同語義
 def _compute_importance_map(
     roi_size: Sequence[int],
     mode: str = "constant",
@@ -60,6 +71,12 @@ def _compute_importance_map(
     dtype: torch.dtype = torch.float32,
     device: torch.device | str = "cpu",
 ) -> torch.Tensor:
+    """Return a 1×1×*roi_size* importance map.
+
+    Two modes are supported:
+      * ``"constant"`` – a map of ones.
+      * ``"gaussian"`` – normalised Gaussian centred in the patch.
+    """
     if mode.lower() == "constant":
         return torch.ones(
             (1, 1, *roi_size), dtype=dtype, device=device, requires_grad=False
@@ -84,11 +101,14 @@ def _compute_importance_map(
     return g_map[None, None, ...]  # shape (1,1,*roi)
 
 
-# C. 取得掃描起點（interval = (1-overlap)*roi，最少 1）
 def _scan_intervals(
     roi_size: Sequence[int],
     overlap: float,
 ) -> Tuple[int, ...]:
+    """Compute scan step (stride) for each spatial dimension.
+
+    Step = ``(1 - overlap) * roi_size``, but always at least 1.
+    """
     intervals = []
     for r in roi_size:
         if overlap < 0 or overlap >= 1:
@@ -98,17 +118,17 @@ def _scan_intervals(
     return tuple(intervals)
 
 
-# D. 建立所有 patch 的 slice 列表
 def _dense_patch_slices(
     img_size: Sequence[int],
     roi_size: Sequence[int],
     interval: Sequence[int],
 ) -> List[Tuple[slice, ...]]:
+    """Generate *all* sliding‑window slices that densely cover the image."""
     starts_per_dim = []
     for im, r, step in zip(img_size, roi_size, interval):
         stops = im - r
         if stops < 0:
-            raise ValueError("ROI 大於影像（已先 pad，不應出現）")
+            raise ValueError("ROI 大於影像（需先 pad，不應出現）")
         s = list(range(0, stops + 1, step))
         if s[-1] != stops:
             s.append(stops)
@@ -120,14 +140,129 @@ def _dense_patch_slices(
     return slice_list
 
 
-# E. 重新取樣 importance_map 至 seg_prob 尺寸（nearest，無 alias）
 def _resize_importance(
     imp: torch.Tensor,
     new_spatial: Sequence[int],
 ) -> torch.Tensor:
+    """Nearest‑neighbour resize keeping dtype & device."""
     if list(imp.shape[2:]) == list(new_spatial):
         return imp
     return F.interpolate(imp, size=new_spatial, mode="nearest")
+
+
+def _preprocess_inputs(
+    inputs: torch.Tensor,
+    roi_size: Sequence[int] | int,
+    padding_mode: str,
+    cval: float,
+) -> Tuple[torch.Tensor, Tuple[int, ...], List[int], List[int], List[int]]:
+    """Pad input if ROI bigger than image; return padded tensor & meta."""
+    batch_sz, _, *img_size = inputs.shape
+    roi_size = _fallback_roi_size(roi_size, img_size)
+    need_pad = [max(r - s, 0) for r, s in zip(roi_size, img_size)]
+    if any(need_pad):
+        pad_seq: List[int] = []  # torch.pad pads last dim first
+        for diff in reversed(need_pad):
+            half = diff // 2
+            pad_seq.extend([half, diff - half])
+        inputs = F.pad(inputs, pad=pad_seq, mode=padding_mode, value=cval)
+        img_size = list(inputs.shape[2:])
+    else:
+        pad_seq = [0] * (len(img_size) * 2)
+    return inputs, roi_size, need_pad, pad_seq, img_size
+
+
+def _plan_patches(
+    img_size: Sequence[int],
+    roi_size: Sequence[int],
+    overlap: float,
+    sw_batch_size: int,
+    batch_sz: int,
+    progress_unit: str,
+) -> Tuple[List[Tuple[slice, ...]], int, int]:
+    intervals = _scan_intervals(roi_size, overlap)
+    slices = _dense_patch_slices(img_size, roi_size, intervals)
+    total_patches = len(slices) * batch_sz
+    total_units = (
+        total_patches
+        if progress_unit == "patch"
+        else math.ceil(total_patches / sw_batch_size)
+    )
+    return slices, total_patches, total_units
+
+
+def _allocate_buffers(
+    pred_tuple: Tuple[torch.Tensor, ...],
+    batch_sz: int,
+    img_size: Sequence[int],
+    roi_size: Sequence[int],
+    device: torch.device | str,
+    dtype: torch.dtype,
+) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    out_buffers: List[torch.Tensor] = []
+    cnt_buffers: List[torch.Tensor] = []
+    ndim = len(img_size)
+    for seg in pred_tuple:
+        zoom = [seg.shape[2 + d] / roi_size[d] for d in range(ndim)]
+        out_shape = [batch_sz, seg.shape[1]] + [
+            int(img_size[d] * zoom[d]) for d in range(ndim)
+        ]
+        out_buffers.append(torch.zeros(out_shape, dtype=dtype, device=device))
+        cnt_buffers.append(
+            torch.zeros([1, 1] + out_shape[2:], dtype=dtype, device=device)
+        )
+    return out_buffers, cnt_buffers
+
+
+def _accumulate_batch(
+    pred_tuple: Tuple[torch.Tensor, ...],
+    patch_slices: List[Tuple[int, Tuple[slice, ...]]],
+    out_buffers: List[torch.Tensor],
+    cnt_buffers: List[torch.Tensor],
+    importance_map: torch.Tensor,
+    roi_size: Sequence[int],
+):
+    ndim = len(roi_size)
+    for buf_idx, seg in enumerate(pred_tuple):
+        zoom = [seg.shape[2 + d] / roi_size[d] for d in range(ndim)]
+        resized_imp = _resize_importance(importance_map, seg.shape[2:]).to(seg.dtype)
+        for local_i, (b, s) in enumerate(patch_slices):
+            canvas_slice: List[slice] = [slice(b, b + 1), slice(None)]
+            for d, sl in enumerate(s):
+                zs, ze = int(sl.start * zoom[d]), int(sl.stop * zoom[d])
+                canvas_slice.append(slice(zs, ze))
+            cs = tuple(canvas_slice)
+            out_buffers[buf_idx][cs] += seg[local_i] * resized_imp
+            cnt_buffers[buf_idx][(slice(None), slice(None)) + cs[2:]] += resized_imp
+
+
+def _finalise_outputs(
+    out_buffers: List[torch.Tensor],
+    cnt_buffers: List[torch.Tensor],
+    need_pad: List[int],
+    img_size_orig: Sequence[int],
+    pad_seq: List[int],
+    dict_keys: Optional[List[Any]],
+    tensor_only: bool,
+):
+    # average overlaps
+    outputs = [
+        o / torch.clamp_min(c, torch.finfo(o.dtype).eps)
+        for o, c in zip(out_buffers, cnt_buffers)
+    ]
+    # remove padding
+    if any(need_pad):
+        crop_slices: List[slice] = []
+        for d, diff in enumerate(need_pad):
+            half = diff // 2
+            end = half + img_size_orig[d]  # original size
+            crop_slices.append(slice(half, end))
+        crop_full = (slice(None), slice(None), *crop_slices)
+        outputs = [o[crop_full] for o in outputs]
+    # restore output structure
+    if dict_keys is not None:
+        return dict(zip(dict_keys, outputs))
+    return outputs[0] if tensor_only else tuple(outputs)
 
 
 # -------------------------------------------------------------------------- #
@@ -160,13 +295,29 @@ def sliding_window_inference(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     progress_unit: str = "patch",  # "patch" or "batch"
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...], Dict[Any, torch.Tensor]]:
-    """
-    Pure-PyTorch sliding window inference with feature-parity to MONAI 1.x.
+    """Run sliding‑window inference over *N*D images.
 
-    新增：
-    -------
-    * ``progress_callback(done, total)``：每完成一個 patch / batch 即呼叫，方便 PySide6 更新 GUI。
-    * ``progress_unit``            ："patch"（預設）或 "batch"，決定 callback 與 tqdm 更新顆粒度。
+    Args:
+        inputs: Input tensor of shape ``(B, C, *spatial)``.
+        roi_size: ROI size used during sliding.  ``≤ 0`` or ``None`` means *full
+            image* in that dimension.
+        sw_batch_size: How many patches to process per forward pass.
+        predictor: Callable like ``lambda x: model(x)``.
+        overlap: Fraction between [0, 1) determining stride.
+        mode: Importance map mode – ``"constant"`` or ``"gaussian"``.
+        sigma_scale: Gaussian σ as a fraction of ROI (if ``mode=='gaussian'``).
+        padding_mode: Padding strategy forwarded to :func:`torch.nn.functional.pad`.
+        cval: Constant pad value (if ``padding_mode=='constant'``).
+        sw_device: Device used for *patch* inference (defaults to ``inputs.device``).
+        device: Device hosting accumulation buffers (defaults to ``inputs.device``).
+        progress: Whether to show a tqdm progress bar.
+        roi_weight_map: Pre‑computed importance map matching ``roi_size``.
+        process_fn: Optional callable ``(pred_tuple, patch, importance) -> (new_pred, new_imp)``.
+        progress_callback: ``f(done: int, total: int)`` for GUI updates.
+        progress_unit: Defines callback granularity – per‑"patch" or per‑"batch".
+
+    Returns:
+        Same structure (Tensor / tuple / dict) as returned by ``predictor``.
     """
     if inputs.dim() < 4:
         raise ValueError(
@@ -179,31 +330,16 @@ def sliding_window_inference(
     if sw_device is None:
         sw_device = inputs.device
 
-    batch_size, in_channels, *img_size = inputs.shape
-    spatial_dims = len(img_size)
+    batch_sz = inputs.shape[0]
 
-    # ──roi_size fallback & pad──────────────────────────────────────────────
-    roi_size = _fallback_roi_size(roi_size, img_size)
-    need_pad = [max(r - s, 0) for r, s in zip(roi_size, img_size)]
-    if any(need_pad):
-        # F.pad 的填充順序是從最後一維開始
-        pad = []
-        for diff in reversed(need_pad):
-            half = diff // 2
-            pad.extend([half, diff - half])
-        inputs = F.pad(inputs, pad=pad, mode=padding_mode, value=cval)
-        img_size = list(inputs.shape[2:])  # 更新為 padding 後大小
-    else:
-        pad = [0] * (spatial_dims * 2)  # 用於後續裁切
+    # roi_size fallback & pad──────────────────────────────────────────────
+    inputs, roi_size, need_pad, pad_seq, img_size = _preprocess_inputs(
+        inputs, roi_size, padding_mode, cval
+    )
 
-    # ──scan slices──────────────────────────────────────────────────────────
-    interval = _scan_intervals(roi_size, overlap)
-    slices = _dense_patch_slices(img_size, roi_size, interval)
-    num_win = len(slices)
-    total_patches = num_win * batch_size
-    unit_is_patch = progress_unit == "patch"
-    total_units = (
-        total_patches if unit_is_patch else math.ceil(total_patches / sw_batch_size)
+    # ──Sliding‑window coordinates─────────────────────────
+    slices, total_patches, total_units = _plan_patches(
+        img_size, roi_size, overlap, sw_batch_size, batch_sz, progress_unit
     )
 
     # ──importance map───────────────────────────────────────────────────────
@@ -235,20 +371,21 @@ def sliding_window_inference(
     out_buffers: List[torch.Tensor] = []
     cnt_buffers: List[torch.Tensor] = []
     dict_keys: Optional[List[Any]] = None
-    is_tensor_output = True  # predictor 是否僅回傳 Tensor
-    buffers_init = False
+    tensor_only = True  # predictor 是否僅回傳 Tensor
+    buffers_ready = False
 
     # ──主迴圈───────────────────────────────────────────────────────────────
     done_units = 0
     for g in range(0, total_patches, sw_batch_size):
-        patch_range = range(g, min(g + sw_batch_size, total_patches))
+        prange = range(g, min(g + sw_batch_size, total_patches))
 
         # 取得每個切片 (batch_idx, roi_slice)
-        patch_slices = []
-        for idx in patch_range:
-            b = idx // num_win
-            s = slices[idx % num_win]
-            patch_slices.append((b, s))
+        patch_slices: List[Tuple[int, Tuple[slice, ...]]] = [
+            (i // len(slices), slices[i % len(slices)]) for i in prange
+        ]
+        patches = torch.stack(
+            [inputs[b, :, *s].to(sw_device, non_blocking=True) for b, s in patch_slices]
+        )
 
         # 堆疊成 (B,C,*roi)
         patches = torch.stack(
@@ -265,10 +402,10 @@ def sliding_window_inference(
             if dict_keys is None:
                 dict_keys = sorted(pred_out.keys())
             pred_tuple = tuple(pred_out[k] for k in dict_keys)
-            is_tensor_output = False
+            tensor_only = False
         else:  # Sequence
             pred_tuple = tuple(pred_out)
-            is_tensor_output = False
+            tensor_only = False
 
         # 自訂 process_fn（與 MONAI 同介面）
         imp_curr = imp_map
@@ -276,69 +413,27 @@ def sliding_window_inference(
             pred_tuple, imp_curr = process_fn(pred_tuple, patches, imp_map)
 
         # 建立 / 檢查 buffers（針對多輸出）
-        if not buffers_init:
-            for ss, seg in enumerate(pred_tuple):
-                zoom = [seg.shape[2 + d] / roi_size[d] for d in range(spatial_dims)]
-                out_shape = [batch_size, seg.shape[1]] + [
-                    int(img_size[d] * zoom[d]) for d in range(spatial_dims)
-                ]
-                out_buffers.append(
-                    torch.zeros(out_shape, dtype=inputs.dtype, device=device)
-                )
-                cnt_buffers.append(
-                    torch.zeros(
-                        [1, 1] + out_shape[2:], dtype=inputs.dtype, device=device
-                    )
-                )
-            buffers_init = True
+        if not buffers_ready:
+            out_buffers, cnt_buffers = _allocate_buffers(
+                pred_tuple, batch_sz, img_size, roi_size, device, inputs.dtype
+            )
+            buffers_ready = True
 
-        # 將 patch 倒回大圖
-        for ss, seg in enumerate(pred_tuple):
-            zoom = [seg.shape[2 + d] / roi_size[d] for d in range(spatial_dims)]
-            imp_resized = _resize_importance(imp_curr, seg.shape[2:]).to(seg.dtype)
-            for local_idx, (b, s) in enumerate(patch_slices):
-                # 對應到 output 畫布的 slice（含 batch & channel）
-                zoomed_slices: List[slice] = [slice(b, b + 1), slice(None)]
-                for d, sl in enumerate(s):
-                    zs = int(sl.start * zoom[d])
-                    ze = int(sl.stop * zoom[d])
-                    zoomed_slices.append(slice(zs, ze))
-                zoomed_slices = tuple(zoomed_slices)
-
-                out_buffers[ss][zoomed_slices] += seg[local_idx] * imp_resized
-                cnt_buffers[ss][
-                    (slice(None), slice(None)) + zoomed_slices[2:]
-                ] += imp_resized
+        # Accumulate predictions
+        _accumulate_batch(
+            pred_tuple, patch_slices, out_buffers, cnt_buffers, imp_curr, roi_size
+        )
 
         # ──進度更新─────────────────────────────────────────────────────────
-        done_units += len(patch_range) if unit_is_patch else 1
+        done_units += len(prange) if progress_unit == "patch" else 1
         if pbar is not None:
-            pbar.update(len(patch_range) if unit_is_patch else 1)
+            pbar.update(len(prange) if progress_unit == "patch" else 1)
         if progress_callback is not None:
             progress_callback(done_units, total_units)
 
     if pbar is not None:
         pbar.close()
 
-    # ──重疊區域平均────────────────────────────────────────────────────────
-    outputs: List[torch.Tensor] = []
-    for out, cnt in zip(out_buffers, cnt_buffers):
-        outputs.append(out / torch.clamp_min(cnt, torch.finfo(out.dtype).eps))
-
-    # ──移除 padding────────────────────────────────────────────────────────
-    if any(need_pad):
-        crop_slices: List[slice] = []
-        for d, diff in enumerate(need_pad):
-            half = diff // 2
-            end = half + img_size[d] - diff  # img_size 已是 pad 後，減 diff 取原長
-            crop_slices.append(slice(half, end))
-        crop_slices_full = (slice(None), slice(None), *crop_slices)
-        outputs = [o[crop_slices_full] for o in outputs]
-
-    # ──整理回傳格式（tensor / tuple / dict）───────────────────────────────
-    if dict_keys is not None:
-        final = dict(zip(dict_keys, outputs))
-    else:
-        final = outputs[0] if is_tensor_output else tuple(outputs)
-
-    return final
+    return _finalise_outputs(
+        out_buffers, cnt_buffers, need_pad, img_size, pad_seq, dict_keys, tensor_only
+    )
