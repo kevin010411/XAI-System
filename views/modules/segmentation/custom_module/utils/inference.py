@@ -31,6 +31,28 @@ except ImportError:  # Fallback: still works without tqdm.
 
 __all__ = ["sliding_window_inference"]
 
+# -----------------------------------------------------------------------------
+# Type aliases
+# -----------------------------------------------------------------------------
+TensorOrSeqDict = Union[
+    torch.Tensor,
+    Sequence[torch.Tensor],
+    Dict[Any, torch.Tensor],
+]
+
+ProcessFn = Callable[
+    [Tuple[torch.Tensor, ...], torch.Tensor, torch.Tensor],
+    Tuple[Tuple[torch.Tensor, ...], torch.Tensor],
+]
+
+ProgressCb = Callable[[int, int], None]
+
+XaiPreHook = Callable[[torch.Tensor, List[Tuple[int, Tuple[slice, ...]]], int], None]
+XaiPostHook = Callable[
+    [Tuple[torch.Tensor, ...], List[Tuple[int, Tuple[slice, ...]]], int], None
+]
+XaiFinalHook = Callable[[TensorOrSeqDict], None]
+
 # -------------------------------------------------------------------------- #
 # Internal helpers                                                           #
 # -------------------------------------------------------------------------- #
@@ -199,8 +221,8 @@ def _allocate_buffers(
     device: torch.device | str,
     dtype: torch.dtype,
 ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-    out_buffers: List[torch.Tensor] = []
-    cnt_buffers: List[torch.Tensor] = []
+    out_buffers: List[torch.Tensor] = []  # important map × 預測
+    cnt_buffers: List[torch.Tensor] = []  # important map
     ndim = len(img_size)
     for seg in pred_tuple:
         zoom = [seg.shape[2 + d] / roi_size[d] for d in range(ndim)]
@@ -232,7 +254,7 @@ def _accumulate_batch(
                 zs, ze = int(sl.start * zoom[d]), int(sl.stop * zoom[d])
                 canvas_slice.append(slice(zs, ze))
             cs = tuple(canvas_slice)
-            out_buffers[buf_idx][cs] += seg[local_i] * resized_imp
+            out_buffers[buf_idx][cs] += seg[local_i].detach() * resized_imp
             cnt_buffers[buf_idx][(slice(None), slice(None)) + cs[2:]] += resized_imp
 
 
@@ -268,14 +290,12 @@ def _finalise_outputs(
 # -------------------------------------------------------------------------- #
 # Public API                                                                 #
 # -------------------------------------------------------------------------- #
-@torch.inference_mode()
+# @torch.inference_mode()
 def sliding_window_inference(
     inputs: torch.Tensor,
     roi_size: Sequence[int] | int,
     sw_batch_size: int,
-    predictor: Callable[
-        ..., Union[torch.Tensor, Sequence[torch.Tensor], Dict[Any, torch.Tensor]]
-    ],
+    predictor: Callable[[torch.Tensor], TensorOrSeqDict],
     *,
     overlap: float = 0.25,
     mode: str = "constant",
@@ -286,15 +306,13 @@ def sliding_window_inference(
     device: torch.device | str | None = None,
     progress: bool = False,
     roi_weight_map: Optional[torch.Tensor] = None,
-    process_fn: Optional[
-        Callable[
-            [Tuple[torch.Tensor, ...], torch.Tensor, torch.Tensor],
-            Tuple[Tuple[torch.Tensor, ...], torch.Tensor],
-        ]
-    ] = None,
-    progress_callback: Optional[Callable[[int, int], None]] = None,
+    process_fn: Optional[ProcessFn] = None,
+    progress_callback: Optional[ProgressCb] = None,
     progress_unit: str = "patch",  # "patch" or "batch"
-) -> Union[torch.Tensor, Tuple[torch.Tensor, ...], Dict[Any, torch.Tensor]]:
+    xai_pre_patch: Optional[XaiPreHook] = None,
+    xai_post_patch: Optional[XaiPostHook] = None,
+    xai_final: Optional[XaiFinalHook] = None,
+) -> TensorOrSeqDict:
     """Run sliding‑window inference over *N*D images.
 
     Args:
@@ -342,7 +360,7 @@ def sliding_window_inference(
         img_size, roi_size, overlap, sw_batch_size, batch_sz, progress_unit
     )
 
-    # ──importance map───────────────────────────────────────────────────────
+    # ──importance map(Patch所佔權重)────────────────────────────────────────
     if roi_weight_map is not None and tuple(roi_weight_map.shape[2:]) == tuple(
         roi_size
     ):
@@ -383,14 +401,14 @@ def sliding_window_inference(
         patch_slices: List[Tuple[int, Tuple[slice, ...]]] = [
             (i // len(slices), slices[i % len(slices)]) for i in prange
         ]
-        patches = torch.stack(
-            [inputs[b, :, *s].to(sw_device, non_blocking=True) for b, s in patch_slices]
-        )
 
         # 堆疊成 (B,C,*roi)
         patches = torch.stack(
             [inputs[b, :, *s].to(sw_device, non_blocking=True) for b, s in patch_slices]
         )
+
+        if xai_pre_patch is not None:
+            xai_pre_patch(patches, patch_slices, done_units)
 
         # 推論
         pred_out = predictor(patches)
@@ -406,6 +424,10 @@ def sliding_window_inference(
         else:  # Sequence
             pred_tuple = tuple(pred_out)
             tensor_only = False
+
+        # >>> XAI post‑patch hook <<<
+        if xai_post_patch is not None:
+            xai_post_patch(pred_tuple, patch_slices, done_units)
 
         # 自訂 process_fn（與 MONAI 同介面）
         imp_curr = imp_map
@@ -434,6 +456,13 @@ def sliding_window_inference(
     if pbar is not None:
         pbar.close()
 
-    return _finalise_outputs(
+    # 7) Finalise & return --------------------------------------------------
+    results = _finalise_outputs(
         out_buffers, cnt_buffers, need_pad, img_size, pad_seq, dict_keys, tensor_only
     )
+
+    # >>> XAI final hook <<<
+    if xai_final is not None:
+        xai_final(results)
+
+    return results
