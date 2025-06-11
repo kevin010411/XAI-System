@@ -22,24 +22,15 @@ class MainWindow(QMainWindow):
         self.volume_dock = VolumeDock()
         self.segmentation_dock = SegmentationDock()
         self.explain_dock = ExplainDock()
-        self.slice_axial = SliceDock("axial", self.volume_dock.update_slice_plane)
-        self.slice_coronal = SliceDock("coronal", self.volume_dock.update_slice_plane)
-        self.slice_sagittal = SliceDock("sagittal", self.volume_dock.update_slice_plane)
 
         self.docks = [
             ("CT Volume Viewer", self.volume_dock, Qt.LeftDockWidgetArea),
             ("Segmentation Viewer", self.segmentation_dock, Qt.RightDockWidgetArea),
             ("Explain Viewer", self.explain_dock, Qt.BottomDockWidgetArea),
-            ("Slice Axial (Z)", self.slice_axial, Qt.RightDockWidgetArea),
-            ("Slice Coronal (Y)", self.slice_coronal, Qt.RightDockWidgetArea),
-            ("Slice Sagittal (X)", self.slice_sagittal, Qt.RightDockWidgetArea),
         ]
 
         # 訂閱data_manager
         self.data_manager.register(self.volume_dock)
-        self.data_manager.register(self.slice_axial)
-        self.data_manager.register(self.slice_coronal)
-        self.data_manager.register(self.slice_sagittal)
         self.data_manager.register(self.segmentation_dock)
 
         menu_bar = self.menuBar()
@@ -105,3 +96,10 @@ class MainWindow(QMainWindow):
                 print("拿到模型物件：", model.__class__.__name__)
                 self.model = model
                 self.segmentation_dock.update_model_and_config(model, config)
+
+    def closeEvent(self, ev):
+        """程式退出前，先讓各 Dock 釋放 VTK 相關資源。"""
+        for _, dock, _ in self.docks:
+            if hasattr(dock, "prepare_for_exit"):
+                dock.prepare_for_exit()
+        super().closeEvent(ev)  # 交回 Qt 正常結束

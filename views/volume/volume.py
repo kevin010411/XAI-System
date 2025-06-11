@@ -3,7 +3,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QLabel,
     QDockWidget,
+    QTabWidget,
+    QSplitter,
+    QSizePolicy,
 )
+from PySide6.QtCore import Qt, QSize, QEvent
 import numpy as np
 import vtk
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
@@ -16,6 +20,7 @@ from ..utils import wrap_with_frame
 from .transfer_editor import OpacityEditor
 from .histogram_viewer import HistogramViewer
 from .camera_control_panel import CameraControlPanel
+from .slice_dock import SliceDock
 
 
 def numpy_dtype_to_vtk(dtype):
@@ -42,8 +47,12 @@ class VolumeDock(QDockWidget):
         super().__init__(title)
         self.container = QWidget()
         self.layout = QVBoxLayout()
+        self.tab = QTabWidget()
 
         self.status_label = QLabel("尚未載入任何資料")
+
+        self.layout.addWidget(wrap_with_frame(self.status_label))
+        self.layout.addWidget(self.tab)
 
         # 設定VTK
         self.vtk_widget = QVTKRenderWindowInteractor(self.container)
@@ -57,14 +66,19 @@ class VolumeDock(QDockWidget):
         interactor.Initialize()
         interactor.SetInteractorStyle(vtkInteractorStyleTrackballCamera())
 
-        self.opacity_editor = OpacityEditor(self.update_transfer_function)
-        self.histogram_viewer = HistogramViewer()
         self.camera_panel = CameraControlPanel(interactor, self.renderer)
 
-        self.layout.addWidget(wrap_with_frame(self.status_label))
-        self.layout.addWidget(self.histogram_viewer)
-        self.layout.addWidget(self.opacity_editor)
-        self.layout.addWidget(self.vtk_widget)
+        # 設定Slice View
+        self.slice_axial = SliceDock("axial", self.update_slice_plane)
+        self.slice_coronal = SliceDock("coronal", self.update_slice_plane)
+        self.slice_sagittal = SliceDock("sagittal", self.update_slice_plane)
+        self.update_list = [self.slice_axial, self.slice_coronal, self.slice_sagittal]
+        for slice in self.update_list:
+            tweak_slice_dock(slice)
+
+        self._init_control_panel()  # 增加control panel至tab中
+
+        self._init_volume_panel()  # 增加volume panel至tab中
 
         self.container.setLayout(self.layout)
         self.setWidget(wrap_with_frame(self.container))
@@ -74,7 +88,39 @@ class VolumeDock(QDockWidget):
         self.slice_planes_cache = {}  # 統一管理全部平面
         self._slice_plane_actors = {}
 
+    def _init_control_panel(self):
+        self.opacity_editor = OpacityEditor(self.update_transfer_function)
+        self.histogram_viewer = HistogramViewer()
+        self.control_panel_widget = QWidget()  # 建立一個容器
+        self.control_panel_layout = QVBoxLayout(self.control_panel_widget)
+        self.control_panel_layout.addWidget(self.histogram_viewer)
+        self.control_panel_layout.addWidget(self.opacity_editor)
+        self.tab.addTab(self.control_panel_widget, "Control Panel")
+
+    def _init_volume_panel(self):
+        h_split = QSplitter(Qt.Orientation.Horizontal)  # 左/右
+        left_v_split = QSplitter(Qt.Orientation.Vertical)  # 左側上/下
+        right_v_split = QSplitter(Qt.Orientation.Vertical)  # 右側上/下
+        # --------左右 split 合體---------
+        h_split.addWidget(left_v_split)
+        h_split.addWidget(right_v_split)
+        # 加入內容至Split
+        left_v_split.addWidget(self.slice_axial)
+        left_v_split.addWidget(self.slice_coronal)
+        right_v_split.addWidget(self.vtk_widget)
+        right_v_split.addWidget(self.slice_sagittal)
+        # # --------等比例初始大小 ----------
+        # h_split.setSizes([1, 1])
+        # left_v_split.setSizes([1, 1])
+        # right_v_split.setSizes([1, 1])
+        # 加進Tab中
+        self.tab.addTab(h_split, "Volume Rendering")
+        # self.tab.addTab(self.vtk_widget, "Volume Rendering")
+
     def update(self, img):
+        for update_object in self.update_list:
+            update_object.update(img)
+
         volume = img.get_fdata()
 
         self.opacity_editor.set_range(volume.min(), volume.max())
@@ -277,3 +323,55 @@ class VolumeDock(QDockWidget):
             del self.slice_planes_cache[view_type]
         # 統一顯示所有現有的平面
         self.show_slice_plane(self.slice_planes_cache)
+
+    def prepare_for_exit(self):
+        """釋放 VTK OpenGL context、Matplotlib 與子 SliceDock。"""
+
+        if getattr(self, "_already_finalized", False):
+            return
+
+        try:
+            # 釋放 volume & actors
+            if self.renderer is not None:
+                self.renderer.RemoveAllViewProps()
+
+            # 關掉 orientation marker
+            if hasattr(self, "marker") and self.marker is not None:
+                self.marker.SetEnabled(False)
+                self.marker = None
+
+            # 終止 VTK interactor & 關閉 RenderWindow
+            if self.vtk_widget is not None:
+                rw = self.vtk_widget.GetRenderWindow()
+                if rw is not None:
+                    rw.Finalize()  # 釋放 OpenGL context
+                    rw.SetInteractor(None)  # ← 關鍵：防止後面還有人呼叫 Render
+                self.vtk_widget.TerminateApp()
+                self.vtk_widget.hide()  # 防止 Qt 再 paint
+        except Exception as exc:
+            # 若仍有 context 失效等例外，不讓它往外拋
+            print("VolumeDock _finalize_vtk() error:", exc)
+
+        self._already_finalized = True
+
+
+def tweak_slice_dock(dock: QDockWidget):
+    """
+    把 SliceDock 改成：
+      • 可伸縮（取消 setFixedSize 效果）
+      • 不能關閉、不能浮動，只能拖曳
+      • 隱藏標題列 + 外框
+    """
+    MAXSIZE = 16777215
+    # 1) 解除固定大小 → 重設 min/max + size policy
+    dock.setMinimumSize(QSize(0, 0))
+    dock.setMaximumSize(QSize(MAXSIZE, MAXSIZE))
+    dock.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    # 2) 移除 Dock 按鈕（╳ 與 ⛶）
+    dock_features = QDockWidget.DockWidgetFeature.NoDockWidgetFeatures
+    dock.setFeatures(dock_features)
+
+    # 3) 隱藏標題列 & 外框
+    dock.setTitleBarWidget(QWidget(dock))  # 空白 widget → 沒標題列
+    dock.setStyleSheet("QDockWidget { border: none; }")  # 去外框

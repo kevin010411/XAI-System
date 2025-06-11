@@ -9,8 +9,8 @@ from PySide6.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import numpy as np
-
-from .utils import wrap_with_frame
+import nibabel as nib
+from ..utils import wrap_with_frame
 
 
 class SliceDock(QDockWidget):
@@ -66,11 +66,12 @@ class SliceDock(QDockWidget):
         self.last_event = None
 
     def update(self, img):
-        volume = img.get_fdata()
-        self.volume = np.transpose(volume, (2, 1, 0))
+        img_ras = nib.as_closest_canonical(img)  # :contentReference[oaicite:0]{index=0}
+        self.volume = img_ras.get_fdata()
+        self.volume = np.transpose(self.volume, (2, 1, 0))
         self.img = img
         self.spacing = img.header.get_zooms()
-        shape = volume.shape
+        shape = self.volume.shape
         idx = {"axial": 0, "coronal": 1, "sagittal": 2}.get(self.view_type, 0)
         self.slice_index = shape[idx] // 2
         self.zoom = 1.0
@@ -81,7 +82,6 @@ class SliceDock(QDockWidget):
     def render(self):
         if self.volume is None:
             return
-
         # 切片選取
         if self.view_type == "axial":
             img = self.volume[self.slice_index, :, :]
