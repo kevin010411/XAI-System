@@ -168,8 +168,12 @@ class OpacityCurveCanvas(FigureCanvas):
 
     def _update_point_artists(self, xs, ys, cs):
         # 先移除舊的 artist
-        if self.scatter:
+        if self.scatter in self.ax.collections:
             self.scatter.remove()
+
+        if not self.display_points:
+            return
+
         sizes = np.where(
             np.arange(len(xs)) == (self.selected_point_index or -1), 100, 50
         )
@@ -244,9 +248,3 @@ class OpacityCurveCanvas(FigureCanvas):
         """
         y = np.exp(-0.5 * ((x - normal_mean) / normal_std) ** 2)
         return float(y)
-
-    def disable_point_display(self):
-        self.display_points = False
-
-    def enable_point_display(self):
-        self.display_points = True

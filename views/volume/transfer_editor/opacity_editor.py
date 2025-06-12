@@ -1,7 +1,15 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QHBoxLayout,
+    QToolBox,
+)
 
 from .opacity_canva import OpacityCurveCanvas
 from .color_picker import ColorPickerWidget
+from .editor_toolbox_button import EditorToolBox
 
 
 class OpacityEditor(QWidget):
@@ -37,21 +45,26 @@ class OpacityEditor(QWidget):
         )
         layout.addWidget(self.color_picker)
 
-        btn_layout = QHBoxLayout()
+        self.toolbox_popup = None
+        self.toggle_btn = QPushButton("≡ 工具箱")
+        self.toggle_btn.setCheckable(True)
+        self.toggle_btn.toggled.connect(self.toggle_toolbox)
+        layout.addWidget(self.toggle_btn)
 
-        self.clear_btn = QPushButton("清除所有中間點")
-        self.clear_btn.clicked.connect(self.clear_points)
-        btn_layout.addWidget(self.clear_btn)
+    def toggle_toolbox(self, checked: bool):
+        if checked:
+            if self.toolbox_popup is None:
+                self.toolbox_popup = EditorToolBox(self.toggle_btn)
+                self.toolbox_popup.clear_points.connect(self.clear_points)
+                self.toolbox_popup.generate_normal_distribution.connect(
+                    self.generate_normal_distribution
+                )
+                self.toolbox_popup.toggle_merge.connect(self.toggle_merge)
 
-        self.norm_btn = QPushButton("產生常態分佈")
-        self.norm_btn.clicked.connect(self.generate_normal_distribution)
-        btn_layout.addWidget(self.norm_btn)
-
-        self.add_btn = QPushButton("合併所有曲線")
-        self.add_btn.clicked.connect(self.toggle_merge)
-        btn_layout.addWidget(self.add_btn)
-
-        layout.addLayout(btn_layout)
+            self.toolbox_popup.show()
+        else:
+            self.toolbox_popup.close()
+            self.toolbox_popup = None
 
     def _update_plot(self):
         self.canvas.update_points(self.points, self.curve_list)
@@ -95,7 +108,8 @@ class OpacityEditor(QWidget):
         self._update_plot()
 
     def toggle_merge(self):
-        pass
+        self.canvas.display_points = not self.canvas.display_points
+        self._update_plot()
         # if not self.curve_list:
         #     return
         # if not self.is_merged:
@@ -118,5 +132,3 @@ class OpacityEditor(QWidget):
         #     self.canvas.enable_point_display()
         #     self.curve_list = []
         #     self.is_merged = False
-
-        self._update_plot()

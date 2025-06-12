@@ -89,8 +89,8 @@ class VolumeDock(QDockWidget):
         self._slice_plane_actors = {}
 
     def _init_control_panel(self):
-        self.opacity_editor = OpacityEditor(self.update_transfer_function)
         self.histogram_viewer = HistogramViewer()
+        self.opacity_editor = OpacityEditor(self.update_transfer_function)
         self.control_panel_widget = QWidget()  # 建立一個容器
         self.control_panel_layout = QVBoxLayout(self.control_panel_widget)
         self.control_panel_layout.addWidget(self.histogram_viewer)
