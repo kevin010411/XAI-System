@@ -43,7 +43,7 @@ def numpy_dtype_to_vtk(dtype):
 
 
 class VolumeDock(QDockWidget):
-    def __init__(self, title="CT Volume Viewer"):
+    def __init__(self, title="CT Volume Viewer", slice_mode="grey"):
         super().__init__(title)
         self.container = QWidget()
         self.layout = QVBoxLayout()
@@ -69,9 +69,15 @@ class VolumeDock(QDockWidget):
         self.camera_panel = CameraControlPanel(interactor, self.renderer)
 
         # 設定Slice View
-        self.slice_axial = SliceDock("axial", self.update_slice_plane)
-        self.slice_coronal = SliceDock("coronal", self.update_slice_plane)
-        self.slice_sagittal = SliceDock("sagittal", self.update_slice_plane)
+        self.slice_axial = SliceDock(
+            "axial", self.update_slice_plane, display_mode=slice_mode
+        )
+        self.slice_coronal = SliceDock(
+            "coronal", self.update_slice_plane, display_mode=slice_mode
+        )
+        self.slice_sagittal = SliceDock(
+            "sagittal", self.update_slice_plane, display_mode=slice_mode
+        )
         self.update_list = [self.slice_axial, self.slice_coronal, self.slice_sagittal]
         for slice in self.update_list:
             tweak_slice_dock(slice)

@@ -15,7 +15,9 @@ from ..utils import wrap_with_frame
 
 class SliceDock(QDockWidget):
 
-    def __init__(self, view_type="axial", show_in_volume_callback=None):
+    def __init__(
+        self, view_type="axial", show_in_volume_callback=None, display_mode="grey"
+    ):
         view_title = {
             "axial": "Axial (Z)",
             "coronal": "Coronal (Y)",
@@ -25,6 +27,7 @@ class SliceDock(QDockWidget):
 
         self.show_in_volume_callback = show_in_volume_callback
         self.view_type = view_type
+        self.display_mode = display_mode
 
         self.setFixedSize(200, 200)
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
@@ -64,6 +67,19 @@ class SliceDock(QDockWidget):
 
         self.dragging = False
         self.last_event = None
+
+    def get_cmap(self):
+        match self.display_mode:
+            case "gray":
+                cmap = "gray"
+            case "heatmap":
+                cmap = "hot"
+            case "cold_to_hot":
+                cmap = "coolwarm"
+            case _:
+                cmap = "gray"
+
+        return cmap
 
     def update(self, img):
         img_ras = nib.as_closest_canonical(img)  # :contentReference[oaicite:0]{index=0}
@@ -115,11 +131,11 @@ class SliceDock(QDockWidget):
             constant_values=np.min(img),
         )
         padded_height, padded_width = padded_img.shape
-
+        cmap = self.get_cmap()
         # 顯示圖片
         self.ax.imshow(
             np.rot90(padded_img, self.rotation),
-            cmap="gray",
+            cmap=cmap,
             origin="upper",
             extent=[0, padded_width, 0, padded_height],
         )

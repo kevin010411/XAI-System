@@ -1,10 +1,10 @@
+import json
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QLabel,
     QPushButton,
-    QHBoxLayout,
-    QToolBox,
+    QFileDialog,
 )
 
 from .opacity_canva import OpacityCurveCanvas
@@ -60,6 +60,8 @@ class OpacityEditor(QWidget):
                     self.generate_normal_distribution
                 )
                 self.toolbox_popup.toggle_merge.connect(self.toggle_merge)
+                self.toolbox_popup.save_transfer.connect(self.save_state)
+                self.toolbox_popup.load_transfer.connect(self.load_state)
 
             self.toolbox_popup.show()
         else:
@@ -67,11 +69,18 @@ class OpacityEditor(QWidget):
             self.toolbox_popup = None
 
     def _update_plot(self):
+        """
+        從外部改變點須通知canva改變
+        """
         self.canvas.update_points(self.points, self.curve_list)
+        self.color_picker.gradient_canvas.update_gradient(self.points)
         if self.on_update_callback:
             self.on_update_callback()
 
     def _on_canvas_updated(self, updated_points):
+        """
+        從canva裡面call改變
+        """
         self.points = updated_points
         self.color_picker.gradient_canvas.update_gradient(self.points)
         if self.on_update_callback:
@@ -132,3 +141,33 @@ class OpacityEditor(QWidget):
         #     self.canvas.enable_point_display()
         #     self.curve_list = []
         #     self.is_merged = False
+
+    def save_state(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "儲存 Transfer Function", "", "TF JSON (*.tf.json)"
+        )
+        if path is None:
+            return
+
+        state = {
+            "points": [{"x": x, "y": y, "color": rgb} for x, y, rgb in self.points],
+            "curves": [curve for curve in self.curve_list],
+        }
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(state, file)
+
+    def load_state(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "讀取 Transfer Function", "", "TF JSON (*.tf.json)"
+        )
+        if path is None:
+            return
+
+        with open(path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        # 1) 還原 points
+        self.points = [(d["x"], d["y"], tuple(d["color"])) for d in state["points"]]
+        # 2) 還原 curves
+        self.curve_list = state.get("curves", [])
+
+        self._update_plot()

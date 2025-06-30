@@ -32,10 +32,7 @@ class SegmentationDock(QDockWidget):
         layout.addWidget(self.label)
 
         tab = QTabWidget()
-        self.segment_volume_dock = VolumeDock()
-        self.segment_volume_dock.setTitleBarWidget(QWidget(self.segment_volume_dock))
-        self.segment_volume_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        tab.addTab(self.segment_volume_dock, "Volume Viewer")
+        self._init_segment_tab(tab)
         self._init_xai_tab(tab)
 
         layout.addWidget(tab)
@@ -55,8 +52,14 @@ class SegmentationDock(QDockWidget):
         )
         self.loading_spinner.stop()
 
+    def _init_segment_tab(self, tab):
+        self.segment_volume_dock = VolumeDock()
+        self.segment_volume_dock.setTitleBarWidget(QWidget(self.segment_volume_dock))
+        self.segment_volume_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
+        tab.addTab(self.segment_volume_dock, "Volume Viewer")
+
     def _init_xai_tab(self, tab):
-        self.xai_volume_dock = VolumeDock()
+        self.xai_volume_dock = VolumeDock(slice_mode="cold_to_hot")
         self.xai_volume_dock.setTitleBarWidget(QWidget(self.xai_volume_dock))
         self.xai_volume_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
         widget = QWidget()
