@@ -31,5 +31,19 @@ class DataManager:
     def get_current(self):
         return self.imgs.get(self.current_key, None)
 
+    def remove_img(self, img_name):
+        """刪除第 idx 張影像；成功回傳 True，失敗回傳 False"""
+
+        if img_name in self.imgs:
+            img = self.imgs.pop(img_name)
+            if hasattr(img, "close"):
+                img.close()
+            if self.current_key == img_name:
+                self.current_key = next(iter(self.imgs), None)
+            self.set_current(self.current_key)
+            return True
+
+        return False
+
     def register(self, observer):
         self.observers.append(observer)
