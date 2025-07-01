@@ -1,29 +1,32 @@
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-)
-from views.volume.transfer_editor import OpacityEditor
+from views.display.transfer_editor import OpacityEditor
 from views import HistogramViewer
 
+from .base_panel import BasePanel
 
-class VolumePanel(QWidget):
-    def __init__(self, parent=None):
+
+class VolumePanel(BasePanel):
+    def __init__(self, volume_renderer, parent=None):
         super().__init__(parent)
-        self.parent = parent
         self.setWindowTitle("Volume Control Panel")
-        self.setMinimumSize(300, 200)
-        self.setStyleSheet("background-color: #f0f0f0;")
-        self._init_control_panel()
 
-    def _init_control_panel(self):
+        self.volume_renderer = volume_renderer
         self.histogram_viewer = HistogramViewer()
         self.opacity_editor = OpacityEditor(self.update_transfer_function)
-        self.control_panel_layout = QVBoxLayout(self)
-        self.control_panel_layout.addWidget(self.histogram_viewer)
-        self.control_panel_layout.addWidget(self.opacity_editor)
+        self.layout.addWidget(self.histogram_viewer)
+        self.layout.addWidget(self.opacity_editor)
 
     def update_transfer_function(self):
         """
         需要把 OpacityEditor 的透明度曲線傳遞給 VolumeDock，
         """
-        pass
+        if not hasattr(self, "opacity_editor"):
+            return
+
+        points = self.opacity_editor.get_points()
+        self.volume_renderer.update_transfer_function(points)
+
+    def update(self, img):
+        volume = img.get_fdata()
+
+        self.opacity_editor.set_range(volume.min(), volume.max())
+        self.histogram_viewer.set_histogram(volume)

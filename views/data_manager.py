@@ -47,3 +47,6 @@ class DataManager:
 
     def register(self, observer):
         self.observers.append(observer)
+        if self.get_current() is not None:
+            # 如果有當前影像，則立即更新觀察者
+            observer.update(self.get_current())

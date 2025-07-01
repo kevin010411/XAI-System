@@ -8,13 +8,13 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QThread, Signal, Slot
 
-from .modules import sliding_window_inference
+from .segmentation_models import sliding_window_inference
 import nibabel as nib
 import numpy as np
 import torch
 from .utils import wrap_with_frame, WaitingSpinner
-from .modules import build_transform, SlidingGradCAM3D
-from .volume import VolumeDock
+from .segmentation_models import build_transform, SlidingGradCAM3D
+from .display import VolumeDock
 
 
 class SegmentationDock(QDockWidget):

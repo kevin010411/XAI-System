@@ -1,3 +1,4 @@
+from functools import partial
 from PySide6.QtWidgets import (
     QMainWindow,
     QFileDialog,
@@ -16,6 +17,7 @@ from views import DataManager
 from views import ModelConfigDialog
 from views import Split2x2Window
 from views import InitPanel, VolumePanel
+from views import VolumeRenderer
 
 
 class MainWindow(QMainWindow):
@@ -29,7 +31,9 @@ class MainWindow(QMainWindow):
 
         # 主畫面
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        left_widget = InitPanel(data_manager=self.data_manager)
+        left_widget = QLabel(
+            "左側面板 (可放置其他工具或資訊)", alignment=Qt.AlignmentFlag.AlignCenter
+        )
         right_widget = Split2x2Window()
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(right_widget)
@@ -54,8 +58,10 @@ class MainWindow(QMainWindow):
         # self.slice_docks = [
         #     SliceDock(view_type) for view_type in ("axial", "coronal", "sagittal")
         # ]
+        volume_renderer = VolumeRenderer()
+        self.data_manager.register(volume_renderer)
         # right_widget.set_pane(0, 0, self.slice_docks[0])
-        # right_widget.set_pane(0, 1, self.volume_dock)
+        right_widget.set_pane(0, 1, volume_renderer)
         # right_widget.set_pane(1, 0, self.slice_docks[1])
         # right_widget.set_pane(1, 1, self.slice_docks[2])
 
@@ -86,35 +92,22 @@ class MainWindow(QMainWindow):
 
         self.tool_bar = QToolBar("Dock Selector", self)
         self.tool_bar.setMovable(False)
-        self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.tool_bar)
 
+        breakpoint
         self.dock_selector = QComboBox(self)
         self.select_panel = [
-            {"label": "初始化面板", "factory": InitPanel},
-            {"label": "Volume Control Panel", "factory": VolumePanel},
+            {"label": "初始化面板", "factory": partial(InitPanel, self.data_manager)},
+            {
+                "label": "Volume Control Panel",
+                "factory": partial(VolumePanel, volume_renderer=volume_renderer),
+            },
         ]
-        self._panel_cache = {"0": left_widget}
+        self._panel_cache = {}
         self.dock_selector.addItems([item["label"] for item in self.select_panel])
         self.dock_selector.currentIndexChanged.connect(self.change_control_panel)
         self.tool_bar.addWidget(self.dock_selector)
-
-    def register_menu_bar(self, view_menu):
-        def visibility_handler(dock, visible):
-            if visible and self.data_manager.get_current() is not None:
-                dock.update(self.data_manager.get_current())
-            else:  # TODO 清除視窗內容
-                pass
-
-        for label, dock, area in self.docks:
-            self.addDockWidget(area, dock)
-            action = QAction(label, self, checkable=True, checked=True)
-            view_menu.addAction(action)
-            action.toggled.connect(dock.setVisible)
-            dock.visibilityChanged.connect(action.setChecked)
-            dock.visibilityChanged.connect(
-                lambda visible, d=dock: visibility_handler(d, visible)
-            )
-            self.dock_actions.append(action)
+        self.change_control_panel(0)  # 預設載入 InitPanel
 
     def set_dock_config(self):
         self.setDockOptions(
@@ -135,10 +128,12 @@ class MainWindow(QMainWindow):
 
     def change_control_panel(self, index):
         panel_info = self.select_panel[index]
+        label = panel_info["label"]
         factory = panel_info["factory"]
-        if index not in self._panel_cache:
-            self._panel_cache[index] = factory(parent=self)
-        widget = self._panel_cache[index]
+        if label not in self._panel_cache:
+            self._panel_cache[label] = factory(parent=self)
+            self.data_manager.register(self._panel_cache[label])
+        widget = self._panel_cache[label]
         if 0 >= self.splitter.count():
             self.splitter.insertWidget(0, widget)
         else:

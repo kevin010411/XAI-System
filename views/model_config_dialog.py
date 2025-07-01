@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 import torch
 from mmengine import Config
-from .modules import build_model
+from .segmentation_models.custom_module import build_model
 
 
 class ModelConfigDialog(QDialog):

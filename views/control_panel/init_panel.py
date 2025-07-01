@@ -8,31 +8,29 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import Qt
+from .base_panel import BasePanel
 
 
-class InitPanel(QWidget):
+class InitPanel(BasePanel):
 
     def __init__(self, data_manager, parent=None):
-        super().__init__(parent)
-        self.data_manager = data_manager
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        super().__init__(data_manager, parent)
 
         center_text = QLabel("初始化頁面，歡迎使用此程式")
-        layout.addWidget(center_text)
+        self.layout.addWidget(center_text)
         # 添加載入 NIfTI 檔案按鈕
         load_data_button = QPushButton("載入 NIfTI 檔案")
         load_data_button.clicked.connect(self.load_nifti)
-        layout.addWidget(load_data_button)
+        self.layout.addWidget(load_data_button)
         # 添加刪除目前影像按鈕
         btn_delete = QPushButton("刪除目前影像")
         btn_delete.clicked.connect(self.delete_current_img)
-        layout.addWidget(btn_delete)
+        self.layout.addWidget(btn_delete)
 
         # 添加影像選擇下拉選單
         self.img_selector = QComboBox()
         self.img_selector.currentIndexChanged.connect(self.on_img_selected)
-        layout.addWidget(self.img_selector)
+        self.layout.addWidget(self.img_selector)
 
         self.refresh_img_selector()
 
@@ -80,9 +78,12 @@ class InitPanel(QWidget):
         """使用者在下拉選了新影像 → 通知 DataManager。"""
         if index < 0:
             return
-        # 這裡假設 DataManager 有 set_current(index)
         try:
-            self.data_manager.set_current(index)
+            self.data_manager.set_current(self.img_selector.itemText(index))
         except AttributeError:
             # 如果是用物件而非 index，請改成 self.data_manager.set_current(self.data_manager.imgs[index])
             pass
+
+    def update(self, img):
+        """更新 InitPanel 的內容，這裡可以顯示一些影像資訊。"""
+        return
