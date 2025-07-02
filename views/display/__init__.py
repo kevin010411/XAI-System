@@ -3,12 +3,12 @@ from .volume_renderer import VolumeRenderer
 from .histogram_viewer import HistogramViewer
 from .transfer_editor import *
 from .camera_control_panel import CameraControlPanel
-from .slice_dock import SliceDock
+from .slice_view import SliceView
 
 __all__ = [
     "VolumeDock",
     "HistogramViewer",
     "CameraControlPanel",
-    "SliceDock",
+    "SliceView",
     "VolumeRenderer",
 ]

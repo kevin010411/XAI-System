@@ -33,6 +33,10 @@ class VolumeRenderer(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self._slice_plane_actors = {}
+        self._slice_planes_cache = {}
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         # 設定VTK
@@ -173,3 +177,113 @@ class VolumeRenderer(QWidget):
     def update(self, img):
         volume = img.get_fdata()
         self.render_volume(volume, img)
+
+    def update_slice_plane(self, view_type, slice_index, img2d, remove=False):
+        if not remove:
+            self._slice_planes_cache[view_type] = (slice_index, img2d.copy())
+        elif view_type in self._slice_planes_cache:
+            del self._slice_planes_cache[view_type]
+        # 統一顯示所有現有的平面
+        self._show_slice_plane(self._slice_planes_cache)
+
+    def _show_slice_plane(
+        self, slice_dict: dict[str, tuple[int, np.ndarray]], *, opacity: float = 1.0
+    ) -> None:
+        """Render multiple oriented 2‑D slices as textured planes in 3‑D
+
+        Parameters
+        ----------
+        slice_dict
+            Mapping from *view type* ("axial", "coronal", "sagittal") to a
+            tuple ``(slice_index, img2d)``.  ``img2d`` **must** be a NumPy array.
+        opacity
+            Actor opacity in the renderer (0 = fully transparent, 1 = opaque).
+        """
+        if self.volume is None:
+            return  # 沒有 3‑D volume 就無法畫切片
+        if not slice_dict:  # 空字典
+            self.vtk_widget.GetRenderWindow().Render()
+            return
+
+        # 移除舊 plane actors，避免堆疊記憶體 & 佔用畫面。
+        for key, actor in self._slice_plane_actors.items():
+            if actor is not None:
+                self.renderer.RemoveActor(actor)
+                self._slice_plane_actors[key] = None  # reset slot
+
+        # 基礎設定 – 軸對應 & volume 邊界 (world coords)。
+        axis_map = {"axial": 2, "coronal": 1, "sagittal": 0}
+        bounds = [0.0] * 6
+        self.volume.GetBounds(bounds)
+        x_min, x_max, y_min, y_max, z_min, z_max = bounds
+
+        # helper – 建立 (origin, point1, point2) 給 vtkPlaneSource
+        def _plane_corners(
+            axis: int, idx: int
+        ) -> tuple[list[float], list[float], list[float]]:
+            """Return three corner points describing an oriented plane."""
+            if axis == 0:  # sagittal → X 固定
+                return (
+                    [idx, y_min, z_min],  # origin
+                    [idx, y_max, z_min],  # point1 → Y 方向
+                    [idx, y_min, z_max],  # point2 → Z 方向
+                )
+            if axis == 1:  # coronal → Y 固定
+                return (
+                    [x_min, idx, z_min],
+                    [x_max, idx, z_min],
+                    [x_min, idx, z_max],
+                )
+            # axial or default → Z 固定
+            return (
+                [x_min, y_min, idx],
+                [x_max, y_min, idx],
+                [x_min, y_max, idx],
+            )
+
+        for view_type, (slice_index, img2d) in slice_dict.items():
+            axis = axis_map.get(view_type, 2)  # default axial
+
+            # ------ 5‑1. 建立平面 geometry ------
+            origin, p1, p2 = _plane_corners(axis, slice_index)
+            plane = vtk.vtkPlaneSource()
+            plane.SetOrigin(*origin)
+            plane.SetPoint1(*p1)
+            plane.SetPoint2(*p2)
+            plane.Update()
+
+            # ------ 5‑2. 將 2‑D NumPy 影像轉 VTK image ------
+            img2d = np.asarray(img2d)  # 保險轉 ndarray
+            # 線性映射到 0‑255 → uint8，方便做灰階紋理
+            img_norm = np.clip(img2d - img2d.min(), 0, None)
+            rng = img_norm.ptp() or 1.0  # ptp = peak‑to‑peak (max‑min)
+            img_uint8 = (img_norm / rng * 255).astype(np.uint8)
+
+            importer = vtk.vtkImageImport()
+            importer.CopyImportVoidPointer(img_uint8.tobytes(), img_uint8.size)
+            importer.SetDataScalarTypeToUnsignedChar()
+            importer.SetNumberOfScalarComponents(1)
+            importer.SetWholeExtent(
+                0, img_uint8.shape[1] - 1, 0, img_uint8.shape[0] - 1, 0, 0
+            )
+            importer.SetDataExtentToWholeExtent()
+            importer.Update()
+
+            # ------ 5‑3. 轉為紋理貼到平面上 ------
+            texture = vtk.vtkTexture()
+            texture.SetInputConnection(importer.GetOutputPort())
+            texture.InterpolateOn()  # 启用雙線性插值，避免像素鋸齒
+
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(plane.GetOutputPort())
+
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.SetTexture(texture)
+            actor.GetProperty().SetOpacity(opacity)
+
+            # ------ 5‑4. 加入 renderer 並保存引用 ------
+            self.renderer.AddActor(actor)
+            self._slice_plane_actors[view_type] = actor
+
+        self.vtk_widget.GetRenderWindow().Render()

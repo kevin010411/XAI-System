@@ -3,6 +3,8 @@ import os
 import nibabel as nib
 import numpy as np
 
+from .control_panel.base_panel import BasePanel
+
 
 class DataManager:
     def __init__(self):
@@ -25,7 +27,7 @@ class DataManager:
         if key in self.imgs:
             self.current_key = key
             for obs in self.observers:
-                if obs.isVisible():
+                if isinstance(obs, BasePanel) or obs.isVisible():
                     obs.update(self.imgs[key])
 
     def get_current(self):

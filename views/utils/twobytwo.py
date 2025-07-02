@@ -1,44 +1,41 @@
 from PySide6.QtWidgets import (
-    QSplitter,
-    QToolBar,
     QWidget,
     QVBoxLayout,
     QLabel,
+    QGridLayout,
+    QToolBar,
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
 
 class PaneWrapper(QWidget):
-    """包裝一個『內容 widget』並在上方附加 Toolbar。"""
+    """包裝內容 widget + Toolbar（含最大化/還原按鈕）"""
 
-    def __init__(self, content: QWidget, owner, pane_id: tuple[int, int]):
-        """
-        :param content: 您想顯示的部件 (可任意 QWidget / QDockWidget)
-        :param owner:   MainWindow，用來呼叫 maximize / restore
-        :param pane_id: (row, col) 方便回報自己是哪格
-        """
+    def __init__(
+        self, content: QWidget, owner: "Split2x2Window", pane_id: tuple[int, int]
+    ):
         super().__init__()
         self._owner = owner
         self._pane_id = pane_id
 
-        # ── Toolbar (可加更多按鈕) ──
-        self.toolbar = QToolBar()
-        self.toolbar.setIconSize(self.toolbar.iconSize() * 0.8)
+        self.setStyleSheet("border: 1px solid #888;")
+
+        toolbar = QToolBar()
+        toolbar.setIconSize(toolbar.iconSize() * 0.8)
 
         self._act_toggle = QAction("↗", self, checkable=True)
         self._act_toggle.setStatusTip("最大化 / 還原")
         self._act_toggle.toggled.connect(self._toggle_fullscreen)
-        self.toolbar.addAction(self._act_toggle)
+        toolbar.addAction(self._act_toggle)
 
-        # ── 組 layout ──
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self.toolbar)
+        lay.addWidget(toolbar)
         lay.addWidget(content)
 
-    # ----- toolbar slot -----
+    # ----- 切換全螢幕 -----
     def _toggle_fullscreen(self, checked: bool):
         if checked:
             self._owner.maximize_pane(self._pane_id)
@@ -49,89 +46,82 @@ class PaneWrapper(QWidget):
 
 
 class Split2x2Window(QWidget):
+    """用 QGridLayout 實現等大 2×2；支援單格最大化/還原"""
 
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Pluggable 2×2 Split View")
-        self.resize(900, 600)
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-        # ──────────── splitter 結構 ────────────
-        self._v_split = QSplitter(Qt.Orientation.Vertical)  # 上 / 下
-        self._top_h = QSplitter(Qt.Orientation.Horizontal)  # TL / TR
-        self._bot_h = QSplitter(Qt.Orientation.Horizontal)  # BL / BR
-        self._v_split.addWidget(self._top_h)
-        self._v_split.addWidget(self._bot_h)
+        # ── 建立 2×2 Grid ──
+        self._grid = QGridLayout()
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(0)
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(self._v_split)
+        # 每列、欄伸縮比例 = 1 → 等大
+        for i in range(2):
+            self._grid.setRowStretch(i, 1)
+            self._grid.setColumnStretch(i, 1)
 
-        # 先放四個 placeholder
+        main = QVBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.addLayout(self._grid)
+
+        # 先放 4 個 placeholder
+        self._panes: dict[tuple[int, int], PaneWrapper] = {}
         for r in range(2):
             for c in range(2):
-                placeholder = QLabel(f"Pane {r},{c}", alignment=Qt.AlignCenter)
-                self.set_pane(r, c, placeholder)
+                self.set_pane(r, c, QLabel(f"Pane {r},{c}", alignment=Qt.AlignCenter))
 
-        # split 初始平均
-        self._v_split.setSizes([1, 1])
-        self._top_h.setSizes([1, 1])
-        self._bot_h.setSizes([1, 1])
-
-        # 儲存 splitter 尺寸用
-        self._saved_sizes: dict[str, list[list[int]]] = {}
-        self._is_maximized = False
+        self._maximized: tuple[int, int] | None = None  # 目前是否全螢幕
 
     # ---------- 公開 API ----------
     def set_pane(self, row: int, col: int, widget: QWidget):
-        """把外部 widget 裝進指定格 (0/1, 0/1)；自動加 toolbar。"""
-        wrapper = PaneWrapper(widget, owner=self, pane_id=(row, col))
-        if row == 0:
-            self._replace_in_split(self._top_h, col, wrapper)
-        else:
-            self._replace_in_split(self._bot_h, col, wrapper)
+        """把外部 widget 裝進 (row, col)；自動附 Toolbar"""
+        pane = PaneWrapper(widget, owner=self, pane_id=(row, col))
 
-    # ---------- maximize / restore ----------
+        # 若已有舊 pane，先移除
+        if (row, col) in self._panes:
+            old = self._panes[(row, col)]
+            old.setParent(None)
+            old.deleteLater()
+
+        self._panes[(row, col)] = pane
+        self._grid.addWidget(pane, row, col)
+
+    # ---------- 最大化 / 還原 ----------
     def maximize_pane(self, pane_id: tuple[int, int]):
-        """把指定 pane 放大到全螢幕；其餘縮到 0。"""
-        if self._is_maximized:
+        if self._maximized is not None:  # 已在最大化狀態
             return
-        self._is_maximized = True
+        self._maximized = pane_id
 
-        # 存目前三層 splitter 的尺寸
-        self._saved_sizes["v"] = self._v_split.sizes()
-        self._saved_sizes["top"] = self._top_h.sizes()
-        self._saved_sizes["bot"] = self._bot_h.sizes()
+        # 1. 隱藏其餘三格
+        for pos, pane in self._panes.items():
+            if pos != pane_id:
+                pane.hide()
 
-        # 先把所有 size 設 0
-        self._v_split.setSizes([0, 0])
-        self._top_h.setSizes([0, 0])
-        self._bot_h.setSizes([0, 0])
-
-        row, col = pane_id
-        if row == 0:  # 要放大上方
-            self._v_split.setSizes([1, 0])
-            self._top_h.setSizes([1, 0] if col == 0 else [0, 1])
-        else:  # 放大下方
-            self._v_split.setSizes([0, 1])
-            self._bot_h.setSizes([1, 0] if col == 0 else [0, 1])
+        # 2. 把目標 pane 重新加入，佔滿 2×2（rowSpan=colSpan=2）
+        pane = self._panes[pane_id]
+        self._grid.addWidget(pane, 0, 0, 2, 2)
 
     def restore_panes(self):
-        """還原之前儲存的 splitter 尺寸。"""
-        if not self._is_maximized:
+        if self._maximized is None:
             return
-        self._v_split.setSizes(self._saved_sizes["v"])
-        self._top_h.setSizes(self._saved_sizes["top"])
-        self._bot_h.setSizes(self._saved_sizes["bot"])
-        self._is_maximized = False
 
-    # ---------- utils ----------
-    @staticmethod
-    def _replace_in_split(splitter: QSplitter, index: int, widget: QWidget):
-        """把 splitter 第 index 位子的元件換掉。"""
-        old = splitter.widget(index)
-        if old is not None:
-            old.setParent(None)  # ← 先把舊元件從 splitter 拔掉
-            old.hide()  #   讓畫面馬上消失
-            old.deleteLater()  #   等事件迴圈空檔再真正釋放
+        # 取出目前全螢幕 pane、記住內容 widget
+        max_pos = self._maximized
+        pane_full = self._panes[max_pos]
+        self._maximized = None
 
-        splitter.insertWidget(index, widget)  # 插入新元件
+        # 1. 先移除整格，再放回原 row,col（span=1,1）
+        self._grid.removeWidget(pane_full)
+        row, col = max_pos
+        self._grid.addWidget(pane_full, row, col)
+
+        # 2. 顯示其餘三格
+        for pos, pane in self._panes.items():
+            if pos != (row, col):
+                pane.show()
+
+    # ---------- 方便覆蓋 sizeHint（可選） ----------
+    def sizeHint(self):
+        # 給一個舒適的預設大小
+        return QWidget.sizeHint(self)  # 也可固定回 QSize(900, 600)

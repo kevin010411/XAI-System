@@ -20,7 +20,7 @@ from ..utils import wrap_with_frame
 from .transfer_editor import OpacityEditor
 from .histogram_viewer import HistogramViewer
 from .camera_control_panel import CameraControlPanel
-from .slice_dock import SliceDock
+from .slice_view import SliceView
 
 
 def numpy_dtype_to_vtk(dtype):
@@ -69,13 +69,13 @@ class VolumeDock(QDockWidget):
         self.camera_panel = CameraControlPanel(interactor, self.renderer)
 
         # 設定Slice View
-        self.slice_axial = SliceDock(
+        self.slice_axial = SliceView(
             "axial", self.update_slice_plane, display_mode=slice_mode
         )
-        self.slice_coronal = SliceDock(
+        self.slice_coronal = SliceView(
             "coronal", self.update_slice_plane, display_mode=slice_mode
         )
-        self.slice_sagittal = SliceDock(
+        self.slice_sagittal = SliceView(
             "sagittal", self.update_slice_plane, display_mode=slice_mode
         )
         self.update_list = [self.slice_axial, self.slice_coronal, self.slice_sagittal]

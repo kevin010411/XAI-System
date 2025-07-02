@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
-    QDockWidget,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QPushButton,
+    QLabel,
 )
 from PySide6.QtCore import Qt
 import matplotlib.pyplot as plt
@@ -12,46 +12,76 @@ import numpy as np
 import nibabel as nib
 from ..utils import wrap_with_frame
 
+BTN_STYLE = """
+QPushButton {
+    background-color: #e4e4e4;
+    border: 1px solid #999;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+QPushButton:hover {
+    background-color: #d0d0d0;
+}
+QPushButton:pressed {
+    background-color: #a8a8a8;
+    border-style: inset;          /* 讓按下時有凹陷感 */
+}
+"""
 
-class SliceDock(QDockWidget):
+
+class SliceView(QWidget):
+    """A standalone slice viewer widget (formerly QDockWidget)."""
 
     def __init__(
-        self, view_type="axial", show_in_volume_callback=None, display_mode="grey"
+        self,
+        view_type: str = "axial",
+        show_in_volume_callback=None,
+        display_mode: str = "grey",
+        parent: QWidget | None = None,
     ):
-        view_title = {
-            "axial": "Axial (Z)",
-            "coronal": "Coronal (Y)",
-            "sagittal": "Sagittal (X)",
-        }.get(view_type, "Slice")
-        super().__init__(view_title)
+        super().__init__(parent)
 
+        # ---------- meta ----------
         self.show_in_volume_callback = show_in_volume_callback
         self.view_type = view_type
         self.display_mode = display_mode
 
-        self.setFixedSize(200, 200)
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.widget = QWidget()
-        self.layout = QVBoxLayout(self.widget)
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        # ---------- outer layout ----------
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
 
-        control_layout = QHBoxLayout()
+        # ---------- control bar ----------
+        ctrl = QHBoxLayout()
+        self.title_label = QLabel(
+            {
+                "axial": "Axial (Z)",
+                "coronal": "Coronal (Y)",
+                "sagittal": "Sagittal (X)",
+            }.get(view_type, "Slice")
+        )
+        self.title_label.setAlignment(Qt.AlignCenter)
+        ctrl.addWidget(self.title_label)
+
         self.rotate_button = QPushButton("↻ Rotate")
+        self.rotate_button.setStyleSheet(BTN_STYLE)
         self.rotate_button.clicked.connect(self.rotate_view)
         self.show_in_volume_button = QPushButton("Show in Volume")
+        self.show_in_volume_button.setStyleSheet(BTN_STYLE)
         self.show_in_volume_button.clicked.connect(self.toggle_show_slice_in_volume)
-        control_layout.addWidget(self.show_in_volume_button)
-        control_layout.addWidget(self.rotate_button)
-        self.layout.addLayout(control_layout)
+        ctrl.addWidget(self.show_in_volume_button)
+        ctrl.addWidget(self.rotate_button)
+        outer.addLayout(ctrl)
 
-        self.fig = plt.Figure(figsize=(2, 2), dpi=100)
+        # ---------- Matplotlib canvas ----------
+        self.fig = plt.Figure(figsize=(3, 3), dpi=100)
         self.canvas = FigureCanvas(self.fig)
         self.ax = self.fig.add_subplot(111)
         self.ax.axis("off")
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        self.layout.addWidget(self.canvas)
-        self.setWidget(wrap_with_frame(self.widget))
+        outer.addWidget(self.canvas, stretch=1)
 
+        # ---------- state ----------
         self.volume = None
         self.slice_index = 0
         self.rotation = 0
@@ -60,6 +90,7 @@ class SliceDock(QDockWidget):
         self.pan_y = 0.0
         self.show_slice = False
 
+        # ---------- Matplotlib events ----------
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
         self.canvas.mpl_connect("button_press_event", self.on_press)
         self.canvas.mpl_connect("motion_notify_event", self.on_motion)
@@ -68,37 +99,37 @@ class SliceDock(QDockWidget):
         self.dragging = False
         self.last_event = None
 
+    # ===================== helpers =====================
     def get_cmap(self):
         match self.display_mode:
             case "gray":
-                cmap = "gray"
+                return "gray"
             case "heatmap":
-                cmap = "hot"
+                return "hot"
             case "cold_to_hot":
-                cmap = "coolwarm"
+                return "coolwarm"
             case _:
-                cmap = "gray"
+                return "gray"
 
-        return cmap
-
+    # ===================== public API =====================
     def update(self, img):
-        img_ras = nib.as_closest_canonical(img)  # :contentReference[oaicite:0]{index=0}
-        self.volume = img_ras.get_fdata()
-        self.volume = np.transpose(self.volume, (2, 1, 0))
+        img_ras = nib.as_closest_canonical(img)
+        self.volume = np.transpose(img_ras.get_fdata(), (2, 1, 0))
         self.img = img
         self.spacing = img.header.get_zooms()
         shape = self.volume.shape
         idx = {"axial": 0, "coronal": 1, "sagittal": 2}.get(self.view_type, 0)
         self.slice_index = shape[idx] // 2
         self.zoom = 1.0
-        self.pan_x = 0.0
-        self.pan_y = 0.0
+        self.pan_x = self.pan_y = 0.0
         self.render()
 
+    # ===================== rendering =====================
     def render(self):
         if self.volume is None:
             return
-        # 切片選取
+
+        # --- choose slice ---
         if self.view_type == "axial":
             img = self.volume[self.slice_index, :, :]
             spacing = (self.spacing[1], self.spacing[2])
@@ -117,41 +148,33 @@ class SliceDock(QDockWidget):
         self.ax.axis("off")
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-        # 補 padding 成正方形
-        height, width = img.shape
-        physical_w = width * spacing[0]
-        physical_h = height * spacing[1]
+        # --- pad to square ---
+        h, w = img.shape
+        physical_w, physical_h = w * spacing[0], h * spacing[1]
         max_side = max(physical_w, physical_h)
         pad_w = int((max_side - physical_w) / (2 * spacing[0]))
         pad_h = int((max_side - physical_h) / (2 * spacing[1]))
-        padded_img = np.pad(
+        padded = np.pad(
             img,
             ((pad_h, pad_h), (pad_w, pad_w)),
             mode="constant",
             constant_values=np.min(img),
         )
-        padded_height, padded_width = padded_img.shape
-        cmap = self.get_cmap()
-        # 顯示圖片
-        self.ax.imshow(
-            np.rot90(padded_img, self.rotation),
-            cmap=cmap,
-            origin="upper",
-            extent=[0, padded_width, 0, padded_height],
-        )
 
-        # 計算中心與 zoom
-        center_x = padded_width / 2 - self.pan_x
-        center_y = padded_height / 2 - self.pan_y
-        self.zoom = max(padded_width, padded_height) / min(padded_width, padded_height)
-        dx = (padded_width / 2) / self.zoom
-        dy = (padded_height / 2) / self.zoom
-        self.ax.set_xlim(center_x - dx, center_x + dx)
-        self.ax.set_ylim(center_y - dy, center_y + dy)
+        cmap = self.get_cmap()
+        self.ax.imshow(np.rot90(padded, self.rotation), cmap=cmap, origin="upper")
+
+        # --- zoom & pan ---
+        ph, pw = padded.shape
+        cx, cy = pw / 2 - self.pan_x, ph / 2 - self.pan_y
+        dx, dy = (pw / 2) / self.zoom, (ph / 2) / self.zoom
+        self.ax.set_xlim(cx - dx, cx + dx)
+        self.ax.set_ylim(cy - dy, cy + dy)
         self.ax.set_aspect("equal")
 
-        self.canvas.draw()
+        self.canvas.draw_idle()
 
+    # ===================== callbacks =====================
     def toggle_show_slice_in_volume(self):
         self.show_slice = not self.show_slice
         self.render()
@@ -176,8 +199,8 @@ class SliceDock(QDockWidget):
             return
         idx = {"axial": 0, "coronal": 1, "sagittal": 2}[self.view_type]
         max_idx = self.volume.shape[idx] - 1
-        self.slice_index = np.clip(
-            self.slice_index + (10 if event.step > 0 else -10), 0, max_idx
+        self.slice_index = int(
+            np.clip(self.slice_index + (1 if event.step > 0 else -1), 0, max_idx)
         )
         self.render()
         self.show_slice_in_volume()
@@ -188,22 +211,19 @@ class SliceDock(QDockWidget):
             self.last_event = event
 
     def on_motion(self, event):
-        if (
-            not self.dragging
-            or self.last_event is None
-            or event.x is None
-            or event.y is None
+        if not (
+            self.dragging
+            and self.last_event
+            and event.x is not None
+            and event.y is not None
         ):
             return
-        dx = event.x - self.last_event.x
-        dy = event.y - self.last_event.y
+        dx, dy = event.x - self.last_event.x, event.y - self.last_event.y
         if self.last_event.button == 1:
             self.pan_x += dx / self.zoom
             self.pan_y += dy / self.zoom
         elif self.last_event.button == 3:
-            scale_factor = 1 + dy * 0.01
-            self.zoom *= scale_factor
-            self.zoom = max(self.zoom, 0.1)
+            self.zoom = max(self.zoom * (1 + dy * 0.01), 0.1)
         self.last_event = event
         self.render()
 

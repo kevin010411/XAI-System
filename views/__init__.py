@@ -10,7 +10,7 @@ from .main_window import MainWindow
 __all__ = [
     "ExplainDock",
     "SegmentationDock",
-    "SliceDock",
+    "SliceView",
     "ModelConfigDialog",
     "DataManager",
     "MainWindow",

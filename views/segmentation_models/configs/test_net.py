@@ -1,4 +1,4 @@
-pretrain_path = "./views/modules/segmentation/weights/exp_12_4_4_3/best_model.pth"
+pretrain_path = "./views/segmentation_models/weights/exp_12_4_4_3/best_model.pth"
 model = dict(
     type="TESTNET",
     out_channels=2,

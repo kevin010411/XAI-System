@@ -1,12 +1,13 @@
 from views.display.transfer_editor import OpacityEditor
-from views import HistogramViewer
+from views.display import HistogramViewer
 
 from .base_panel import BasePanel
 
 
 class VolumePanel(BasePanel):
-    def __init__(self, volume_renderer, parent=None):
-        super().__init__(parent)
+
+    def __init__(self, volume_renderer, **kwargs):
+        super().__init__(**kwargs)
         self.setWindowTitle("Volume Control Panel")
 
         self.volume_renderer = volume_renderer
@@ -26,7 +27,9 @@ class VolumePanel(BasePanel):
         self.volume_renderer.update_transfer_function(points)
 
     def update(self, img):
+        super().update(img)
         volume = img.get_fdata()
 
         self.opacity_editor.set_range(volume.min(), volume.max())
         self.histogram_viewer.set_histogram(volume)
+        self.volume_renderer.update(img)
