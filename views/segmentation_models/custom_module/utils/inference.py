@@ -305,6 +305,7 @@ def sliding_window_inference(
     sw_device: torch.device | str | None = None,
     device: torch.device | str | None = None,
     progress: bool = False,
+    pbar=None,
     roi_weight_map: Optional[torch.Tensor] = None,
     process_fn: Optional[ProcessFn] = None,
     progress_callback: Optional[ProgressCb] = None,
@@ -316,12 +317,12 @@ def sliding_window_inference(
     """Run sliding‑window inference over *N*D images.
 
     Args:
-        inputs: Input tensor of shape ``(B, C, *spatial)``.
-        roi_size: ROI size used during sliding.  ``≤ 0`` or ``None`` means *full
+        inputs: Input tensor of shape ``(B, C, *spatial)``.
+        roi_size: ROI size used during sliding.  ``≤ 0`` or ``None`` means *full
             image* in that dimension.
         sw_batch_size: How many patches to process per forward pass.
         predictor: Callable like ``lambda x: model(x)``.
-        overlap: Fraction between [0, 1) determining stride.
+        overlap: Fraction between [0, 1) determining stride.
         mode: Importance map mode – ``"constant"`` or ``"gaussian"``.
         sigma_scale: Gaussian σ as a fraction of ROI (if ``mode=='gaussian'``).
         padding_mode: Padding strategy forwarded to :func:`torch.nn.functional.pad`.
@@ -377,13 +378,16 @@ def sliding_window_inference(
         )
 
     # ──進度條───────────────────────────────────────────────────────────────
-    if progress and tqdm is None:
-        warnings.warn("tqdm 未安裝，無法顯示進度列")
-    pbar = (
-        tqdm(total=total_units, desc="Sliding-window", unit=progress_unit)
-        if (progress and tqdm is not None)
-        else None
-    )
+    if pbar is None:
+        if progress and tqdm is None:
+            warnings.warn("tqdm 未安裝，無法顯示進度列")
+        pbar = (
+            tqdm(total=total_units, desc="Sliding-window", unit=progress_unit)
+            if (progress and tqdm is not None)
+            else None
+        )
+    else:
+        pbar.reset(total=total_units)
 
     # ──bufffers（延遲建立以便知道 C_out 與多輸出）──────────────────────────
     out_buffers: List[torch.Tensor] = []

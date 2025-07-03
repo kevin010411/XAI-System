@@ -47,6 +47,14 @@ class DataManager:
 
         return False
 
+    def add_img(self, image_name, image_data):
+        """新增影像到 imgs 字典中"""
+        if image_name not in self.imgs:
+            self.imgs[image_name] = image_data
+        for observer in self.observers:
+            if isinstance(observer, BasePanel):
+                BasePanel.update(observer, image_data)
+
     def register(self, observer):
         self.observers.append(observer)
         if self.get_current() is not None:
