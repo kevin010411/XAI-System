@@ -119,28 +119,7 @@ class OpacityEditor(QWidget):
     def toggle_merge(self):
         self.canvas.display_points = not self.canvas.display_points
         self._update_plot()
-        # if not self.curve_list:
-        #     return
-        # if not self.is_merged:
-        #     self.original_points = self.points.copy()
-        #     ctrl_x, ctrl_y = zip(*[(x, y) for x, y, *_ in self.points])
-        #     curve_x = np.linspace(self.min_val, self.max_val, 200)
-        #     interp_ctrl_y = np.interp(curve_x, ctrl_x, ctrl_y)
-
-        #     norm_x, norm_y = zip(*self.curve_list)
-        #     interp_norm_y = np.interp(curve_x, norm_x, norm_y)
-
-        #     merged_y = np.clip(np.array(interp_ctrl_y) + np.array(interp_norm_y), 0, 1)
-        #     self.points = list(zip(curve_x, merged_y))
-
-        #     self.canvas.disable_point_display()
-        #     self.curve_list = []
-        #     self.is_merged = True
-        # else:
-        #     self.points = self.original_points.copy()
-        #     self.canvas.enable_point_display()
-        #     self.curve_list = []
-        #     self.is_merged = False
+        # 還沒實現
 
     def save_state(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -149,25 +128,31 @@ class OpacityEditor(QWidget):
         if path is None:
             return
 
-        state = {
-            "points": [{"x": x, "y": y, "color": rgb} for x, y, rgb in self.points],
-            "curves": [curve for curve in self.curve_list],
-        }
+        state = self.get_state()
         with open(path, "w", encoding="utf-8") as file:
             json.dump(state, file)
 
-    def load_state(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "讀取 Transfer Function", "", "TF JSON (*.tf.json)"
-        )
-        if path is None:
-            return
+    def get_state(self):
+        return {
+            "points": [{"x": x, "y": y, "color": rgb} for x, y, rgb in self.points],
+            "curves": [curve for curve in self.curve_list],
+        }
 
-        with open(path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        # 1) 還原 points
-        self.points = [(d["x"], d["y"], tuple(d["color"])) for d in state["points"]]
-        # 2) 還原 curves
-        self.curve_list = state.get("curves", [])
+    def load_state(self, state=None):
+        if state is None:  # 如果沒有傳入state，則從檔案讀取
+            path, _ = QFileDialog.getOpenFileName(
+                self, "讀取 Transfer Function", "", "TF JSON (*.tf.json)"
+            )
+            if path is None:
+                return
+
+            with open(path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            self.points = [(d["x"], d["y"], tuple(d["color"])) for d in state["points"]]
+            self.curve_list = state.get("curves", [])
+
+        else:
+            self.points = [(d["x"], d["y"], tuple(d["color"])) for d in state["points"]]
+            self.curve_list = state.get("curves", [])
 
         self._update_plot()

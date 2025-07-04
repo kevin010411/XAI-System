@@ -55,7 +55,7 @@ class VolumeRenderer(QWidget):
 
         self.camera_panel = CameraControlPanel(interactor, self.renderer)
 
-    def render_volume(self, volume_data, img):
+    def render_volume(self, volume_data, img, points=None):
         volume_data = np.transpose(volume_data, (2, 1, 0))  # Z, Y, X → X, Y, Z
         volume_data = np.ascontiguousarray(volume_data)
         dtype = img.get_data_dtype()
@@ -97,7 +97,8 @@ class VolumeRenderer(QWidget):
         render_window = self.vtk_widget.GetRenderWindow()
         self.renderer.AddVolume(self.volume)
         self.renderer.ResetCamera()
-        # self.update_transfer_function()
+        if points is not None:
+            self.update_transfer_function(points)
 
     def _add_orientation_marker(self, interactor):
         axes = vtkAxesActor()
@@ -174,9 +175,9 @@ class VolumeRenderer(QWidget):
 
         self._already_finalized = True
 
-    def update(self, img):
+    def update(self, img, points=None):
         volume = img.get_fdata()
-        self.render_volume(volume, img)
+        self.render_volume(volume, img, points)
 
     def update_slice_plane(self, view_type, slice_index, img2d, remove=False):
         if not remove:

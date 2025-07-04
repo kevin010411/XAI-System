@@ -47,7 +47,7 @@ class InitPanel(BasePanel):
             try:
                 self.data_manager.load_nifti(file_path)
             except Exception as e:
-                print("讀取失敗:", e)
+                print("init_panel - 讀取失敗:", e)
 
     def delete_current_img(self):
         """刪除目前選擇的影像。"""

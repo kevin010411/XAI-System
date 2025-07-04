@@ -32,6 +32,9 @@ class HistogramViewer(QWidget):
         self.layout.addWidget(self.canvas)
         self.thread_pool = QThreadPool.globalInstance()
 
+        self.bins = None
+        self.counts = None
+
     def _init_plot(self):
         self.canvas.figure.tight_layout(pad=0)
         self.canvas.figure.subplots_adjust(left=0, right=1, top=1, bottom=0)
@@ -46,8 +49,21 @@ class HistogramViewer(QWidget):
         worker.signals.finished.connect(self._draw_histogram)
         self.thread_pool.start(worker)
 
+    def get_results(self):
+        return {
+            "bins": self.bins,
+            "counts": self.counts,
+        }
+
+    def load_results(self, results):
+        self.bins = results["bins"]
+        self.counts = results["counts"]
+        self._draw_histogram(self.bins, self.counts)
+
     @Slot(np.ndarray, np.ndarray)
     def _draw_histogram(self, bins, counts):
+        self.bins = bins
+        self.counts = counts
         self.ax.clear()
         self.ax.fill_between(
             bins[:-1], counts / np.max(counts), step="pre", alpha=0.3, color="gray"
