@@ -124,6 +124,11 @@ class SliceView(QWidget):
         self.pan_x = self.pan_y = 0.0
         self.render()
 
+    def change_display_mode(self, mode: str):
+        """Change the display mode of this slice viewer."""
+        self.display_mode = mode
+        self.render()
+
     # ===================== rendering =====================
     def render(self):
         if self.volume is None:

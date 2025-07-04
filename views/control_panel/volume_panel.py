@@ -1,5 +1,5 @@
-from views.display.transfer_editor import OpacityEditor
-from views.display import HistogramViewer
+from views.volume.transfer_editor import OpacityEditor
+from views.volume import HistogramViewer
 
 from .base_panel import BasePanel
 

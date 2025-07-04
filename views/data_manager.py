@@ -30,8 +30,13 @@ class DataManager:
                 if isinstance(obs, BasePanel) or obs.isVisible():
                     obs.update(self.imgs[key])
 
-    def get_current(self):
+    def get_current(self, key=None):
+        """取得當前影像的資料；如果沒有當前影像，則回傳 None"""
         return self.imgs.get(self.current_key, None)
+
+    def get_img(self, img_name):
+        """取得指定影像的資料；如果不存在，則回傳 None"""
+        return self.imgs.get(img_name, None)
 
     def remove_img(self, img_name):
         """刪除第 idx 張影像；成功回傳 True，失敗回傳 False"""

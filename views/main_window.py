@@ -9,12 +9,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
-from views import VolumeDock
-from views import SegmentationDock
-from views import ExplainDock
 from views import SliceView
 from views import DataManager
-from views import ModelConfigDialog
 from views import Split2x2Window
 from views import InitPanel, VolumePanel, SlicePanel, ModelPanel
 from views import VolumeRenderer

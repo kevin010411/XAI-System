@@ -1,14 +1,15 @@
 from PySide6.QtWidgets import (
-    QVBoxLayout,
     QWidget,
     QLabel,
     QFileDialog,
     QPushButton,
-    QComboBox,
+    QTableWidget,
+    QTableWidgetItem,
     QMessageBox,
 )
 from PySide6.QtCore import Qt
 from .base_panel import BasePanel
+from views.utils import CollapsibleBox
 
 
 class InitPanel(BasePanel):
@@ -17,6 +18,14 @@ class InitPanel(BasePanel):
         super().__init__(data_manager, **kwargs)
 
         center_text = QLabel("初始化頁面，歡迎使用此程式")
+
+        self.header_section = CollapsibleBox("Header (影像標頭)")
+        self.extra_section = CollapsibleBox("Extensions / Extra")
+        self.layout.addWidget(self.header_section)
+        self.layout.addWidget(self.extra_section)
+
+        # Initial populate (no image yet)
+        self._update_meta_view(None)
         self.layout.addWidget(center_text)
         # 添加載入 NIfTI 檔案按鈕
         load_data_button = QPushButton("載入 NIfTI 檔案")
@@ -58,12 +67,57 @@ class InitPanel(BasePanel):
         """使用者在下拉選了新影像 → 通知 DataManager。"""
         if index < 0:
             return
-        try:
-            self.data_manager.set_current(self.img_selector.itemText(index))
-        except AttributeError:
-            # 如果是用物件而非 index，請改成 self.data_manager.set_current(self.data_manager.imgs[index])
-            pass
+        self._update_meta_view(
+            self.data_manager.get_img(self.img_selector.itemText(index))
+        )
 
     def update(self, img):
         """更新 InitPanel 的內容，這裡可以顯示一些影像資訊。"""
         super().update(img)
+        if self.img_selector.count() == 1:
+            self.on_img_selected(0)
+
+    def _build_header_table(self, header) -> QTableWidget:
+        keys = header.keys()
+        table = QTableWidget(len(keys), 2)
+        table.setHorizontalHeaderLabels(["Field", "Value"])
+        for row, key in enumerate(keys):
+            table.setItem(row, 0, QTableWidgetItem(key))
+            val = header[key]
+            pretty = (
+                val.tolist() if hasattr(val, "tolist") else val
+            )  # numpy scalar → python
+            table.setItem(row, 1, QTableWidgetItem(str(pretty)))
+        table.resizeColumnsToContents()
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        return table
+
+    def _build_extra_table(self, exts) -> QTableWidget:
+        table = QTableWidget(len(exts), 3)
+        table.setHorizontalHeaderLabels(["#", "Code", "Content (preview)"])
+        for idx, ext in enumerate(exts):
+            table.setItem(idx, 0, QTableWidgetItem(str(idx)))
+            table.setItem(idx, 1, QTableWidgetItem(str(ext.get_code())))
+            content = ext.get_content()
+            if isinstance(content, bytes):
+                preview = content.decode(errors="replace")[:80]
+            else:
+                preview = str(content)[:80]
+            table.setItem(idx, 2, QTableWidgetItem(preview))
+        table.resizeColumnsToContents()
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        return table
+
+    def _update_meta_view(self, img):
+        """Rebuild header / extra tables or show placeholder when *img* is None."""
+        self.header_section.clear()
+        self.extra_section.clear()
+        if img is None:
+            placeholder = QLabel("(尚未選擇影像)")
+            placeholder.setAlignment(Qt.AlignCenter)
+            self.header_section.add_widget(placeholder)
+            self.extra_section.add_widget(QWidget())  # empty
+            return
+
+        self.header_section.add_widget(self._build_header_table(img.header))
+        self.extra_section.add_widget(self._build_extra_table(img.header.extensions))
