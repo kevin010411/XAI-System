@@ -6,14 +6,18 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPoint
 
 
 class PaneWrapper(QWidget):
     """包裝內容 widget + Toolbar（含最大化/還原按鈕）"""
 
     def __init__(
-        self, content: QWidget, owner: "Split2x2Window", pane_id: tuple[int, int]
+        self,
+        content: QWidget,
+        owner: "Split2x2Window",
+        pane_id: tuple[int, int],
+        pin_widget=None,
     ):
         super().__init__()
         self._owner = owner
@@ -21,18 +25,28 @@ class PaneWrapper(QWidget):
 
         self.setStyleSheet("border: 1px solid #888;")
 
-        toolbar = QToolBar()
-        toolbar.setIconSize(toolbar.iconSize() * 0.8)
+        self._toolbar = QToolBar()
+        self._toolbar.setIconSize(self._toolbar.iconSize() * 0.8)
+
+        self._pin_toggle = QAction("🏷️", self, checkable=True)
+        self._pin_toggle.setStatusTip("懸浮視窗")
+        self._pin_toggle.toggled.connect(self._toggle_pin_widget)
+        if pin_widget is not None:
+            flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            self.pin_widget = pin_widget
+            self.pin_widget.setWindowFlags(self.pin_widget.windowFlags() | flags)
+            self.pin_widget.hide()
+        self._toolbar.addAction(self._pin_toggle)
 
         self._act_toggle = QAction("↗", self, checkable=True)
         self._act_toggle.setStatusTip("最大化 / 還原")
         self._act_toggle.toggled.connect(self._toggle_fullscreen)
-        toolbar.addAction(self._act_toggle)
+        self._toolbar.addAction(self._act_toggle)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(toolbar)
+        lay.addWidget(self._toolbar)
         lay.addWidget(content)
 
     # ----- 切換全螢幕 -----
@@ -43,6 +57,24 @@ class PaneWrapper(QWidget):
         else:
             self._owner.restore_panes()
             self._act_toggle.setText("↗")
+
+    # ----- 切換pin_widget -----
+    def _toggle_pin_widget(self, checked: bool):
+        if self.pin_widget is None:
+            return
+        if checked:
+            btn = self._toolbar.widgetForAction(self._pin_toggle)
+            if btn:  # 正常情況都有
+                origin = btn.mapToGlobal(btn.rect().bottomLeft())
+            else:  # 保險做法：用 actionGeometry
+                rect = self._toolbar.actionGeometry(self._pin_toggle)
+                origin = self._toolbar.mapToGlobal(rect.bottomLeft())
+                # 2️⃣ 略微往下偏移，避免陰影/框線重疊
+            self.pin_widget.move(origin + QPoint(0, 4))
+            self.pin_widget.show()
+            self.pin_widget.raise_()
+        else:
+            self.pin_widget.hide()
 
 
 class Split2x2Window(QWidget):
@@ -74,9 +106,13 @@ class Split2x2Window(QWidget):
         self._maximized: tuple[int, int] | None = None  # 目前是否全螢幕
 
     # ---------- 公開 API ----------
-    def set_pane(self, row: int, col: int, widget: QWidget):
+    def set_pane(
+        self, row: int, col: int, widget: QWidget, pin_widget: QWidget | None = None
+    ):
         """把外部 widget 裝進 (row, col)；自動附 Toolbar"""
-        pane = PaneWrapper(widget, owner=self, pane_id=(row, col))
+        pane = PaneWrapper(
+            widget, owner=self, pane_id=(row, col), pin_widget=pin_widget
+        )
 
         # 若已有舊 pane，先移除
         if (row, col) in self._panes:

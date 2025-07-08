@@ -1,4 +1,3 @@
-from functools import partial
 from PySide6.QtWidgets import (
     QMainWindow,
     QFileDialog,
@@ -7,9 +6,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QLabel,
 )
-from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
-from views import SliceView
+from views import SliceView, SliceToolBar
 from views import DataManager
 from views import Split2x2Window
 from views import InitPanel, VolumePanel, SlicePanel, ModelPanel
@@ -51,7 +49,7 @@ class MainWindow(QMainWindow):
             )
             for view_type in ("axial", "coronal", "sagittal")
         ]
-        right_widget.set_pane(0, 0, self.slice_views[0])
+        right_widget.set_pane(0, 0, self.slice_views[0], SliceToolBar(self))
         right_widget.set_pane(0, 1, volume_renderer)
         right_widget.set_pane(1, 0, self.slice_views[1])
         right_widget.set_pane(1, 1, self.slice_views[2])
@@ -126,17 +124,6 @@ class MainWindow(QMainWindow):
             self.splitter.insertWidget(0, widget)
         else:
             self.splitter.replaceWidget(0, widget)
-
-    def open_model_config(self):
-        dlg = ModelConfigDialog(parent=self)
-        if dlg.exec():
-            model, config = dlg.get_model_and_config()
-            if model is None:
-                print("不讀入模型")
-            else:
-                print("拿到模型物件：", model.__class__.__name__)
-                self.model = model
-                self.segmentation_dock.update_model_and_config(model, config)
 
     def resizeEvent(self, event):
         if event.oldSize().height() > 0:  # 避免第一次 show() 觸發
