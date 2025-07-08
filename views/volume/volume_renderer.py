@@ -34,9 +34,6 @@ class VolumeRenderer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self._slice_plane_actors = {}
-        self._slice_planes_cache = {}
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         # 設定VTK
@@ -54,51 +51,73 @@ class VolumeRenderer(QWidget):
         interactor.SetInteractorStyle(vtkInteractorStyleTrackballCamera())
 
         self.camera_panel = CameraControlPanel(interactor, self.renderer)
+        self._add_orientation_marker(self.vtk_widget)
 
-    def render_volume(self, volume_data, img, points=None):
-        volume_data = np.transpose(volume_data, (2, 1, 0))  # Z, Y, X → X, Y, Z
-        volume_data = np.ascontiguousarray(volume_data)
-        dtype = img.get_data_dtype()
+        self._volumes: dict[str, dict[str, any]] = {}
+        # slice planes cache & actors (shared across volumes)
+        self._slice_planes_cache: dict[str, tuple[int, np.ndarray]] = {}
+        self._slice_plane_actors: dict[str, vtk.vtkActor | None] = {}
+
+    def update_volume(
+        self,
+        volume_data: np.ndarray,
+        img,
+        img_name: str,
+        *,
+        replace: bool = True,
+    ) -> None:
+        """Create / update a volume **without triggering a render**.
+
+        The new actor is added to the scene but left *invisible* (visibility
+        off).  Call :py:meth:`show_volume` or :py:meth:`refresh_display` when
+        you're ready to draw.
+        """
+        if img_name in self._volumes and replace:
+            self.remove_volume(img_name, render=False)
+
+        # Prepare VTK image data (XYZ order for VTK)
+        vol_xyz = np.ascontiguousarray(np.transpose(volume_data, (2, 1, 0)))
         importer = vtk.vtkImageImport()
-        data_string = volume_data.tobytes()
-        importer.CopyImportVoidPointer(data_string, len(data_string))
-        vtk_type = numpy_dtype_to_vtk(dtype)
-        importer.SetDataScalarType(vtk_type)
+        importer.CopyImportVoidPointer(vol_xyz.tobytes(), len(vol_xyz.tobytes()))
+        importer.SetDataScalarType(numpy_dtype_to_vtk(img.get_data_dtype()))
         importer.SetNumberOfScalarComponents(1)
         importer.SetWholeExtent(
             0,
-            volume_data.shape[2] - 1,
+            vol_xyz.shape[2] - 1,
             0,
-            volume_data.shape[1] - 1,
+            vol_xyz.shape[1] - 1,
             0,
-            volume_data.shape[0] - 1,
+            vol_xyz.shape[0] - 1,
         )
         importer.SetDataExtentToWholeExtent()
-        spacing = img.header.get_zooms()
-        importer.SetDataSpacing(*spacing[:3])
+        importer.SetDataSpacing(*img.header.get_zooms()[:3])
         importer.Update()
 
-        volume_mapper = vtk.vtkSmartVolumeMapper()
-        volume_mapper.SetInputConnection(importer.GetOutputPort())
+        mapper = vtk.vtkSmartVolumeMapper()
+        mapper.SetInputConnection(importer.GetOutputPort())
 
-        self.volume_color = vtk.vtkColorTransferFunction()
-        self.volume_scalar_opacity = vtk.vtkPiecewiseFunction()
+        color_tf = vtk.vtkColorTransferFunction()
+        opacity_tf = vtk.vtkPiecewiseFunction()
 
-        self.volume_property = vtk.vtkVolumeProperty()
-        self.volume_property.SetColor(self.volume_color)
-        self.volume_property.SetScalarOpacity(self.volume_scalar_opacity)
-        self.volume_property.ShadeOn()
-        self.volume_property.SetInterpolationTypeToLinear()
+        prop = vtk.vtkVolumeProperty()
+        prop.SetColor(color_tf)
+        prop.SetScalarOpacity(opacity_tf)
+        prop.ShadeOn()
+        prop.SetInterpolationTypeToLinear()
 
-        self.volume = vtk.vtkVolume()
-        self.volume.SetMapper(volume_mapper)
-        self.volume.SetProperty(self.volume_property)
+        actor = vtk.vtkVolume()
+        actor.SetMapper(mapper)
+        actor.SetProperty(prop)
+        actor.SetVisibility(False)
+        self.renderer.AddVolume(actor)
 
-        render_window = self.vtk_widget.GetRenderWindow()
-        self.renderer.AddVolume(self.volume)
-        self.renderer.ResetCamera()
-        if points is not None:
-            self.update_transfer_function(points)
+        self._volumes[img_name] = {
+            "actor": actor,
+            "prop": prop,
+            "color_tf": color_tf,
+            "opacity_tf": opacity_tf,
+            "visible": False,
+        }
 
     def _add_orientation_marker(self, interactor):
         axes = vtkAxesActor()
@@ -111,7 +130,29 @@ class VolumeRenderer(QWidget):
         self.marker.SetEnabled(True)
         self.marker.InteractiveOn()
 
-    def update_transfer_function(self, points):
+    def show_volume(self, volume_id: str, visible: bool = True) -> None:
+        """Toggle visibility of a registered volume and **re‑render**."""
+        vol = self._volumes.get(volume_id)
+        if vol is None:
+            print(f"[VolumeRenderer] unknown volume_id: {volume_id}")
+            return
+        actor: vtk.vtkVolume = vol["actor"]
+        actor.SetVisibility(visible)
+        vol["visible"] = visible
+        if visible:
+            self.renderer.ResetCamera()
+        self.refresh_display()
+
+    def refresh_display(self) -> None:
+        """Force a render of the render‑window."""
+        self.renderer.ResetCameraClippingRange()
+        self.vtk_widget.GetRenderWindow().Render()
+
+    def update_transfer_function(
+        self,
+        points,
+        img_name: str,
+    ):
         """
         # vtkPiecewiseFunction 說明：
         # 它是一種從 scalar value → scalar opacity 的插值函數，
@@ -127,23 +168,28 @@ class VolumeRenderer(QWidget):
         # piecewise.AddPoint(500, 0.0)
         # 表示在 100 到 300 之間漸變為最不透明，500 又變透明
         """
-
-        if not hasattr(self, "volume_color") or not hasattr(
-            self, "volume_scalar_opacity"
-        ):
+        vol = self._volumes.get(img_name)
+        if vol is None:
+            print(f"[VolumeRenderer] unknown volume_id: {img_name}")
             return
+        color_tf: vtk.vtkColorTransferFunction = vol["color_tf"]
+        opacity_tf: vtk.vtkPiecewiseFunction = vol["opacity_tf"]
+        visible = vol["visible"]
+        self._apply_tf_points(color_tf, opacity_tf, points)
+        if visible:
+            self.refresh_display()
 
-        self.volume_scalar_opacity.RemoveAllPoints()
-        self.volume_color.RemoveAllPoints()
-
-        # points = self.opacity_editor.get_points()
-        for x, y, color in points:
-            self.volume_scalar_opacity.AddPoint(x, y)
-            r, g, b = color
-            self.volume_color.AddRGBPoint(x, r, g, b)
-
-        if self.vtk_widget.GetRenderWindow():
-            self.vtk_widget.GetRenderWindow().Render()
+    @staticmethod
+    def _apply_tf_points(
+        color_tf: vtk.vtkColorTransferFunction,
+        opacity_tf: vtk.vtkPiecewiseFunction,
+        points: list[tuple[float, float, tuple[float, float, float]]],
+    ) -> None:
+        color_tf.RemoveAllPoints()
+        opacity_tf.RemoveAllPoints()
+        for x, y, (r, g, b) in points:
+            opacity_tf.AddPoint(x, y)
+            color_tf.AddRGBPoint(x, r, g, b)
 
     def prepare_for_exit(self):
         """釋放 VTK OpenGL context、Matplotlib 與子 SliceDock。"""
@@ -175,9 +221,21 @@ class VolumeRenderer(QWidget):
 
         self._already_finalized = True
 
-    def update(self, img, points=None):
+    def update(self, img, img_name):
         volume = img.get_fdata()
-        self.render_volume(volume, img, points)
+        self.update_volume(volume, img, img_name=img_name)
+
+    def remove_volume(self, volume_id: str) -> None:
+        """Remove a volume from the scene and internal dict."""
+        vol = self._volumes.pop(volume_id, None)
+        if vol and vol["actor"] is not None:
+            self.renderer.RemoveVolume(vol["actor"])
+            self.vtk_widget.GetRenderWindow().Render()
+
+    def clear_volumes(self) -> None:
+        """Remove *all* volumes."""
+        for vid in list(self._volumes.keys()):
+            self.remove_volume(vid)
 
     def update_slice_plane(self, view_type, slice_index, img2d, remove=False):
         if not remove:
@@ -200,7 +258,7 @@ class VolumeRenderer(QWidget):
         opacity
             Actor opacity in the renderer (0 = fully transparent, 1 = opaque).
         """
-        if self.volume is None:
+        if self._volumes is None:
             return  # 沒有 3‑D volume 就無法畫切片
         if not slice_dict:  # 空字典
             self.vtk_widget.GetRenderWindow().Render()
@@ -215,7 +273,8 @@ class VolumeRenderer(QWidget):
         # 基礎設定 – 軸對應 & volume 邊界 (world coords)。
         axis_map = {"axial": 2, "coronal": 1, "sagittal": 0}
         bounds = [0.0] * 6
-        self.volume.GetBounds(bounds)
+        ref_actor = next(iter(self._volumes.values()))["actor"]
+        bounds = ref_actor.GetBounds()
         x_min, x_max, y_min, y_max, z_min, z_max = bounds
 
         # helper – 建立 (origin, point1, point2) 給 vtkPlaneSource

@@ -57,17 +57,18 @@ class MainWindow(QMainWindow):
         right_widget.set_pane(1, 1, self.slice_views[2])
         # self.data_manager.register(volume_renderer)
 
-        menu_bar = self.menuBar()
-        # 增加新增讀取NIfTI功能
-        file_menu = menu_bar.addMenu("File")
-        open_action = QAction("Open NIfTI", self)
-        open_action.triggered.connect(self.load_nifti)
-        file_menu.addAction(open_action)
+        # Menu Bar設定
+        # menu_bar = self.menuBar()
+        # # 增加新增讀取NIfTI功能
+        # file_menu = menu_bar.addMenu("File")
+        # open_action = QAction("Open NIfTI", self)
+        # open_action.triggered.connect(self.load_nifti)
+        # file_menu.addAction(open_action)
 
-        setting_menu = menu_bar.addMenu("設定")
-        model_set_action = QAction("設定模型", self, checkable=False, checked=False)
-        setting_menu.addAction(model_set_action)
-        model_set_action.triggered.connect(self.open_model_config)
+        # setting_menu = menu_bar.addMenu("設定")
+        # model_set_action = QAction("設定模型", self, checkable=False, checked=False)
+        # setting_menu.addAction(model_set_action)
+        # model_set_action.triggered.connect(self.open_model_config)
 
         self.dock_actions = []
         # self.register_menu_bar(view_menu)

@@ -136,6 +136,8 @@ class OpacityEditor(QWidget):
         return {
             "points": [{"x": x, "y": y, "color": rgb} for x, y, rgb in self.points],
             "curves": [curve for curve in self.curve_list],
+            "min_val": self.min_val,
+            "max_val": self.max_val,
         }
 
     def load_state(self, state=None):
@@ -148,10 +150,14 @@ class OpacityEditor(QWidget):
 
             with open(path, "r", encoding="utf-8") as f:
                 state = json.load(f)
+            ori_min, ori_max = self.min_val, self.max_val
+            self.set_range(state["min_val"], state["max_val"])
             self.points = [(d["x"], d["y"], tuple(d["color"])) for d in state["points"]]
             self.curve_list = state.get("curves", [])
+            self.set_range(ori_min, ori_max)
 
         else:
+            self.set_range(state["min_val"], state["max_val"])
             self.points = [(d["x"], d["y"], tuple(d["color"])) for d in state["points"]]
             self.curve_list = state.get("curves", [])
 

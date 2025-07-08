@@ -28,7 +28,7 @@ class DataManager:
             self.current_key = key
             for obs in self.observers:
                 if isinstance(obs, BasePanel) or obs.isVisible():
-                    obs.update(self.imgs[key])
+                    obs.update(key, self.imgs[key])
 
     def get_current(self, key=None):
         """取得當前影像的資料；如果沒有當前影像，則回傳 None"""

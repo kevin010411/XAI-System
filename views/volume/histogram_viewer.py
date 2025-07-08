@@ -21,6 +21,8 @@ class HistogramComputeWorker(QRunnable):
 
 
 class HistogramViewer(QWidget):
+    histogram_ready = Signal()
+
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -73,3 +75,4 @@ class HistogramViewer(QWidget):
         self.ax.set_xlabel("Scalar Value")
         self.ax.set_ylabel("Density")
         self.canvas.draw()
+        self.histogram_ready.emit()

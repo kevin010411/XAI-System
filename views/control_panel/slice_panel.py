@@ -103,8 +103,8 @@ class SlicePanel(BasePanel):
         for slice_viewer in self.slice_viewers:
             slice_viewer.change_display_mode(new_mode)
 
-    def update(self, img):
-        super().update(img)
+    def update(self, img_name, img):
+        super().update(img_name, img)
         for slice_viewer in self.slice_viewers:
             slice_viewer.update(img)
         self._initialise_window_spins(img)

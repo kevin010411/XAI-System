@@ -15,21 +15,23 @@ class BasePanel(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(8)
 
-        selector_row = QHBoxLayout()
+        self.selector_row = QHBoxLayout()
         self.selector_label = QLabel("顯示影像：")
-        selector_row.addWidget(self.selector_label)
+        self.selector_row.addWidget(self.selector_label)
 
         self.img_selector = QComboBox()
         self.img_selector.setPlaceholderText("(尚未載入影像)")
-        selector_row.addWidget(self.img_selector, 1)  # stretch=1 讓下拉佔滿剩餘寬度
-        self.layout.addLayout(selector_row)
+        self.selector_row.addWidget(
+            self.img_selector, 1
+        )  # stretch=1 讓下拉佔滿剩餘寬度
+        self.layout.addLayout(self.selector_row)
 
         self._stretch_idx = self.layout.count()
         self.layout.addStretch()
         self.refresh_img_selector()
 
-    def update(self, img):
-        self.refresh_img_selector()
+    def update(self, img_name, img):
+        self.refresh_img_selector(select_last=True)
 
     # ---------- 下拉選單 ----------
     def refresh_img_selector(
