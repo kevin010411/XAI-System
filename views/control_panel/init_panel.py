@@ -61,7 +61,6 @@ class InitPanel(BasePanel):
         if reply != QMessageBox.Yes:
             return
         self.data_manager.remove_img(self.data_manager.current_key)
-        self.refresh_img_selector(select_last=True)
 
     def on_img_selected(self, index: int):
         """使用者在下拉選了新影像 → 通知 DataManager。"""

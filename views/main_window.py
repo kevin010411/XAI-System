@@ -49,10 +49,41 @@ class MainWindow(QMainWindow):
             )
             for view_type in ("axial", "coronal", "sagittal")
         ]
-        right_widget.set_pane(0, 0, self.slice_views[0], SliceToolBar(self))
+        self.init_panel = InitPanel(data_manager=self.data_manager)
+        self.volume_panel = VolumePanel(
+            volume_renderer=volume_renderer,
+            data_manager=self.data_manager,
+        )
+        self.slice_panel = SlicePanel(
+            data_manager=self.data_manager,
+        )
+        self.model_panel = ModelPanel(data_manager=self.data_manager)
+        self.select_panel = [
+            {
+                "label": "初始化面板",
+                "widget": self.init_panel,
+            },
+            {
+                "label": "Volume Control Panel",
+                "widget": self.volume_panel,
+            },
+            {
+                "label": "Slice Control Panel",
+                "widget": self.slice_panel,
+            },
+            {
+                "label": "Modle Control Panel",
+                "widget": self.model_panel,
+            },
+        ]
+        self.slice_toolbar = [
+            SliceToolBar(self.slice_views[i], self.slice_panel, self)
+            for i in range(len(self.slice_views))
+        ]
+        right_widget.set_pane(0, 0, self.slice_views[0], self.slice_toolbar[0])
         right_widget.set_pane(0, 1, volume_renderer)
-        right_widget.set_pane(1, 0, self.slice_views[1])
-        right_widget.set_pane(1, 1, self.slice_views[2])
+        right_widget.set_pane(1, 0, self.slice_views[1], self.slice_toolbar[1])
+        right_widget.set_pane(1, 1, self.slice_views[2], self.slice_toolbar[2])
         # self.data_manager.register(volume_renderer)
 
         # Menu Bar設定
@@ -68,7 +99,6 @@ class MainWindow(QMainWindow):
         # setting_menu.addAction(model_set_action)
         # model_set_action.triggered.connect(self.open_model_config)
 
-        self.dock_actions = []
         # self.register_menu_bar(view_menu)
 
         self.tool_bar = QToolBar("Dock Selector", self)
@@ -76,32 +106,6 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.tool_bar)
 
         self.panel_selector = QComboBox(self)
-        self.select_panel = [
-            {
-                "label": "初始化面板",
-                "widget": InitPanel(data_manager=self.data_manager),
-            },
-            {
-                "label": "Volume Control Panel",
-                "widget": VolumePanel(
-                    volume_renderer=volume_renderer,
-                    data_manager=self.data_manager,
-                ),
-            },
-            {
-                "label": "Slice Control Panel",
-                "widget": SlicePanel(
-                    slice_viewers=self.slice_views,
-                    data_manager=self.data_manager,
-                ),
-            },
-            {
-                "label": "Modle Control Panel",
-                "widget": ModelPanel(data_manager=self.data_manager),
-            },
-        ]
-        for panel in self.select_panel:
-            self.data_manager.register(panel["widget"])
         self.panel_selector.addItems([item["label"] for item in self.select_panel])
         self.panel_selector.currentIndexChanged.connect(self.change_control_panel)
         self.tool_bar.addWidget(self.panel_selector)

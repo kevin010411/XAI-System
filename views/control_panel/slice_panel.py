@@ -14,10 +14,9 @@ class SlicePanel(BasePanel):
 
     _DISPLAY_MODES = ["gray", "cold_to_hot", "heatmap"]
 
-    def __init__(self, slice_viewers, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.setWindowTitle("Slice Control Panel")
-        self.slice_viewers = slice_viewers
 
         self._current_key: str | None = None
         self._current_img = None
@@ -68,11 +67,7 @@ class SlicePanel(BasePanel):
             return  # nothing loaded
         # 1) Persist current settings before switching away
         if self._current_key is not None:
-            self._settings[self._current_key] = {
-                "mode": self.display_mode_selector.currentText(),
-                "vmin": self.min_val_spin.value(),
-                "vmax": self.max_val_spin.value(),
-            }
+            self.save_setting()
 
         # 2) Update current refs
         self._current_key = new_key
@@ -84,9 +79,13 @@ class SlicePanel(BasePanel):
         else:
             self._initialise_window_spins(self._current_img)
 
-        img = self.data_manager.get_img(self._current_key)
-        for slice_viewer in self.slice_viewers:
-            slice_viewer.update(img)
+    def save_setting(self):
+        self._settings[self._current_key] = {
+            "mode": self.display_mode_selector.currentText(),
+            "vmin": self.min_val_spin.value(),
+            "vmax": self.max_val_spin.value(),
+        }
+        return self._settings
 
     def _initialise_window_spins(self, img) -> None:  # noqa: ANN001
         data = img.get_fdata()
@@ -100,11 +99,7 @@ class SlicePanel(BasePanel):
     def change_slice_display_mode(self, index: int) -> None:
         """Change the display mode of all slice viewers."""
         new_mode = self.display_mode_selector.currentText()
-        for slice_viewer in self.slice_viewers:
-            slice_viewer.change_display_mode(new_mode)
 
     def update(self, img_name, img):
         super().update(img_name, img)
-        for slice_viewer in self.slice_viewers:
-            slice_viewer.update(img)
         self._initialise_window_spins(img)

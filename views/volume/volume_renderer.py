@@ -260,15 +260,16 @@ class VolumeRenderer(QWidget):
         """
         if self._volumes is None:
             return  # 沒有 3‑D volume 就無法畫切片
-        if not slice_dict:  # 空字典
-            self.vtk_widget.GetRenderWindow().Render()
-            return
 
         # 移除舊 plane actors，避免堆疊記憶體 & 佔用畫面。
         for key, actor in self._slice_plane_actors.items():
             if actor is not None:
                 self.renderer.RemoveActor(actor)
                 self._slice_plane_actors[key] = None  # reset slot
+
+        if not slice_dict:  # 空字典
+            self.vtk_widget.GetRenderWindow().Render()
+            return
 
         # 基礎設定 – 軸對應 & volume 邊界 (world coords)。
         axis_map = {"axial": 2, "coronal": 1, "sagittal": 0}

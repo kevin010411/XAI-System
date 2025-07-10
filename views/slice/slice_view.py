@@ -28,6 +28,16 @@ QPushButton:pressed {
 }
 """
 
+_VIEW_LABEL = {
+    "axial": "Axial (Z)",
+    "coronal": "Coronal (Y)",
+    "sagittal": "Sagittal (X)",
+}
+_AXIS_IDX = {"axial": 0, "coronal": 1, "sagittal": 2}
+
+DisplayMode = ["gray", "heatmap", "cold_to_hot"]
+ViewType = ["axial", "coronal", "sagittal"]
+
 
 class SliceView(QWidget):
     """A standalone slice viewer widget (formerly QDockWidget)."""
@@ -36,7 +46,7 @@ class SliceView(QWidget):
         self,
         view_type: str = "axial",
         show_in_volume_callback=None,
-        display_mode: str = "grey",
+        display_mode: str = "gray",
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -44,7 +54,7 @@ class SliceView(QWidget):
         # ---------- meta ----------
         self.show_in_volume_callback = show_in_volume_callback
         self.view_type = view_type
-        self.display_mode = display_mode
+        self._display_mode = display_mode
 
         # ---------- outer layout ----------
         outer = QVBoxLayout(self)
@@ -92,16 +102,13 @@ class SliceView(QWidget):
 
         # ---------- Matplotlib events ----------
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
-        self.canvas.mpl_connect("button_press_event", self.on_press)
-        self.canvas.mpl_connect("motion_notify_event", self.on_motion)
-        self.canvas.mpl_connect("button_release_event", self.on_release)
 
         self.dragging = False
         self.last_event = None
 
     # ===================== helpers =====================
     def get_cmap(self):
-        match self.display_mode:
+        match self._display_mode:
             case "gray":
                 return "gray"
             case "heatmap":
@@ -111,22 +118,69 @@ class SliceView(QWidget):
             case _:
                 return "gray"
 
+    def _extract_slice(self, vol: np.ndarray) -> np.ndarray:
+        ax = self.view_type
+        idx = self.slice_idx
+        if ax == "axial":
+            return vol[idx, :, :]
+        if ax == "coronal":
+            return vol[:, idx, :]
+        return vol[:, :, idx]
+
+    def _pad_or_crop_center(img: np.ndarray, side: int) -> np.ndarray:
+        """Return square array of size (side, side) by centered pad or crop."""
+        h, w = img.shape
+        # crop if larger
+        if h > side:
+            top = (h - side) // 2
+            img = img[top : top + side, :]
+            h = side
+        if w > side:
+            left = (w - side) // 2
+            img = img[:, left : left + side]
+            w = side
+        # pad if smaller
+        pad_h = side - h
+        pad_w = side - w
+        if pad_h or pad_w:
+            img = np.pad(
+                img,
+                ((pad_h // 2, pad_h - pad_h // 2), (pad_w // 2, pad_w - pad_w // 2)),
+                constant_values=img.min(),
+            )
+        return img
+
     # ===================== public API =====================
-    def update(self, img):
-        img_ras = nib.as_closest_canonical(img)
-        self.volume = np.transpose(img_ras.get_fdata(), (2, 1, 0))
-        self.img = img
-        self.spacing = img.header.get_zooms()
-        shape = self.volume.shape
-        idx = {"axial": 0, "coronal": 1, "sagittal": 2}.get(self.view_type, 0)
-        self.slice_index = shape[idx] // 2
-        self.zoom = 1.0
-        self.pan_x = self.pan_y = 0.0
+    def update(self, layers: list[dict[str, any]] | nib.Nifti1Image):
+        """Accept list[dict] or single nib image."""
+        if isinstance(layers, list):
+            if not layers:
+                return
+            self.layers = []
+            for lyr in layers:
+                img: nib.Nifti1Image = lyr["img"]
+                arr = np.transpose(nib.as_closest_canonical(img).get_fdata(), (2, 1, 0))
+                self.layers.append(
+                    {
+                        "data": arr,
+                        "opacity": float(lyr.get("opacity", 1.0)),
+                        "cmap": lyr.get("cmap", "gray"),
+                    }
+                )
+            # spacing 取第一層
+            self.spacing = nib.as_closest_canonical(
+                layers[0]["img"]
+            ).header.get_zooms()[:3]
+            shape0 = self.layers[0]["data"].shape
+            self.slice_idx = shape0[_AXIS_IDX[self.view_type]] // 2
+        else:  # 單張 image
+            self.update([{"img": layers, "opacity": 1.0, "cmap": "gray"}])
+            return
         self.render()
 
     def change_display_mode(self, mode: str):
         """Change the display mode of this slice viewer."""
-        self.display_mode = mode
+        self._display_mode = mode
         self.render()
 
     # ===================== rendering =====================
@@ -135,49 +189,32 @@ class SliceView(QWidget):
             return
 
         # --- choose slice ---
-        if self.view_type == "axial":
-            img = self.volume[self.slice_index, :, :]
-            spacing = (self.spacing[1], self.spacing[2])
-        elif self.view_type == "coronal":
-            img = self.volume[:, self.slice_index, :]
-            spacing = (self.spacing[0], self.spacing[2])
-        elif self.view_type == "sagittal":
-            img = self.volume[:, :, self.slice_index]
-            spacing = (self.spacing[0], self.spacing[1])
-        else:
-            img = np.zeros((10, 10))
-            spacing = (1.0, 1.0)
+        base_slice = self._extract_slice(self.layers[0]["data"])
+        h0, w0 = base_slice.shape
+        side = max(h0, w0)
+        base_sq = self._pad_or_crop_center(base_slice, side)
 
-        self.ax.clear()
-        self.ax.set_facecolor("black")
-        self.ax.axis("off")
-        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-        # --- pad to square ---
-        h, w = img.shape
-        physical_w, physical_h = w * spacing[0], h * spacing[1]
-        max_side = max(physical_w, physical_h)
-        pad_w = int((max_side - physical_w) / (2 * spacing[0]))
-        pad_h = int((max_side - physical_h) / (2 * spacing[1]))
-        padded = np.pad(
-            img,
-            ((pad_h, pad_h), (pad_w, pad_w)),
-            mode="constant",
-            constant_values=np.min(img),
+        cmap = {
+            "gray": "gray",
+            "heatmap": "hot",
+            "cold_to_hot": "coolwarm",
+        }
+        self.ax.imshow(
+            np.rot90(base_sq, self.rotation),
+            cmap=cmap[self.layers[0]["cmap"]],
+            origin="upper",
         )
 
-        cmap = self.get_cmap()
-        self.ax.imshow(np.rot90(padded, self.rotation), cmap=cmap, origin="upper")
+        for lyr in self.layers[1:]:
+            slc = self._pad_or_crop_center(self._extract_slice(lyr["data"]), side)
+            self.ax.imshow(
+                np.rot90(slc, self.rotation),
+                cmap=cmap[lyr[0]["cmap"]],
+                origin="upper",
+                alpha=lyr["opacity"],
+            )
 
-        # --- zoom & pan ---
-        ph, pw = padded.shape
-        cx, cy = pw / 2 - self.pan_x, ph / 2 - self.pan_y
-        dx, dy = (pw / 2) / self.zoom, (ph / 2) / self.zoom
-        self.ax.set_xlim(cx - dx, cx + dx)
-        self.ax.set_ylim(cy - dy, cy + dy)
-        self.ax.set_aspect("equal")
-
-        self.canvas.draw_idle()
+        self.fig.canvas.draw_idle()
 
     # ===================== callbacks =====================
     def toggle_show_slice_in_volume(self):
@@ -209,32 +246,6 @@ class SliceView(QWidget):
         )
         self.render()
         self.show_slice_in_volume()
-
-    def on_press(self, event):
-        if event.button in [1, 3]:
-            self.dragging = True
-            self.last_event = event
-
-    def on_motion(self, event):
-        if not (
-            self.dragging
-            and self.last_event
-            and event.x is not None
-            and event.y is not None
-        ):
-            return
-        dx, dy = event.x - self.last_event.x, event.y - self.last_event.y
-        if self.last_event.button == 1:
-            self.pan_x += dx / self.zoom
-            self.pan_y += dy / self.zoom
-        elif self.last_event.button == 3:
-            self.zoom = max(self.zoom * (1 + dy * 0.01), 0.1)
-        self.last_event = event
-        self.render()
-
-    def on_release(self, event):
-        self.dragging = False
-        self.last_event = None
 
     def rotate_view(self):
         self.rotation = (self.rotation + 1) % 4

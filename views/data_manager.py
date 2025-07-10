@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QDockWidget
+from PySide6.QtCore import QStringListModel, Qt
 import os
 import nibabel as nib
 import numpy as np
@@ -9,6 +10,7 @@ from .control_panel.base_panel import BasePanel
 class DataManager:
     def __init__(self):
         self.imgs = {}  # key: name or path, value: ndarray
+        self.img_name_list_model = QStringListModel()
         self.current_key = None
         self.observers: list[QDockWidget] = []
 
@@ -21,6 +23,10 @@ class DataManager:
             transformed_data = nib.orientations.apply_orientation(img_data, ornt)
             img = nib.Nifti1Image(transformed_data, np.eye(4))  # canonical affine
             self.imgs[name] = img
+            row = self.img_name_list_model.rowCount()
+            self.img_name_list_model.insertRow(row)
+            idx = self.img_name_list_model.index(row)
+            self.img_name_list_model.setData(idx, name)
         self.set_current(name)
 
     def set_current(self, key):
@@ -45,20 +51,30 @@ class DataManager:
             img = self.imgs.pop(img_name)
             if hasattr(img, "close"):
                 img.close()
-            if self.current_key == img_name:
-                self.current_key = next(iter(self.imgs), None)
-            self.set_current(self.current_key)
+            self.img_name_list_model.removeRow(self.find_text(img_name))
             return True
 
         return False
 
-    def add_img(self, image_name, image_data):
-        """新增影像到 imgs 字典中"""
-        if image_name not in self.imgs:
-            self.imgs[image_name] = image_data
-        for observer in self.observers:
-            if isinstance(observer, BasePanel):
-                BasePanel.update(observer, image_data)
+    def find_text(self, text: str) -> int:
+        """傳回第一個匹配的 row，找不到回 -1。"""
+        for r in range(self.img_name_list_model.rowCount()):
+            if (
+                self.img_name_list_model.data(
+                    self.img_name_list_model.index(r), Qt.DisplayRole
+                )
+                == text
+            ):
+                return r
+        return -1
+
+    # def add_img(self, image_name, image_data):
+    #     """新增影像到 imgs 字典中"""
+    #     if image_name not in self.imgs:
+    #         self.imgs[image_name] = image_data
+    #     for observer in self.observers:
+    #         if isinstance(observer, BasePanel):
+    #             BasePanel.update(observer, image_data)
 
     def register(self, observer):
         self.observers.append(observer)
