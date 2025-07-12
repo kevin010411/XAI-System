@@ -127,6 +127,7 @@ class SliceView(QWidget):
             return vol[:, idx, :]
         return vol[:, :, idx]
 
+    @staticmethod
     def _pad_or_crop_center(img: np.ndarray, side: int) -> np.ndarray:
         """Return square array of size (side, side) by centered pad or crop."""
         h, w = img.shape
@@ -155,6 +156,8 @@ class SliceView(QWidget):
         """Accept list[dict] or single nib image."""
         if isinstance(layers, list):
             if not layers:
+                self.ax.clear()  # 或 self.ax.clear()
+                self.fig.canvas.draw_idle()
                 return
             self.layers = []
             for lyr in layers:
@@ -185,7 +188,9 @@ class SliceView(QWidget):
 
     # ===================== rendering =====================
     def render(self):
-        if self.volume is None:
+
+        if not self.layers:  # 沒有任何 layer ⇒ 直接 refresh 畫布
+            self.fig.canvas.draw_idle()
             return
 
         # --- choose slice ---
@@ -203,13 +208,14 @@ class SliceView(QWidget):
             np.rot90(base_sq, self.rotation),
             cmap=cmap[self.layers[0]["cmap"]],
             origin="upper",
+            alpha=self.layers[0]["opacity"] / 100.0,
         )
 
         for lyr in self.layers[1:]:
             slc = self._pad_or_crop_center(self._extract_slice(lyr["data"]), side)
             self.ax.imshow(
                 np.rot90(slc, self.rotation),
-                cmap=cmap[lyr[0]["cmap"]],
+                cmap=cmap[lyr["cmap"]],
                 origin="upper",
                 alpha=lyr["opacity"],
             )

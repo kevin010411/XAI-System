@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QStringListModel
+from PySide6.QtCore import Qt, QStringListModel, QSignalBlocker
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -98,14 +98,25 @@ class SliceToolBar(QWidget):
     def _on_slider_changed(self, val: int):
         """滑桿改動：調整透明度 + 同步 row2/row3。"""
         self._sync_rows(val)
-        if hasattr(self.slice_view, "set_opacity"):
-            self.slice_view.set_opacity(val / 100.0)
 
     def _on_model_data_changed(self):
+        combos = [self.row1.combo, self.row2.combo, self.row3.combo]
+
+        # 1️⃣ 先記錄「目前選到的 row」
+        prev_texts = [combo.currentText() for combo in combos]
+
+        # 2️⃣ 更新資料（會觸發 modelReset）
         data_list = [
             ""
         ] + self.slice_panel.data_manager.img_name_list_model.stringList()
         self.img_name_list_model.setStringList(data_list)
+
+        for combo, prev_text in zip(combos, prev_texts):
+            row = combo.findText(prev_text, Qt.MatchExactly)
+            if row != -1:
+                combo.setCurrentIndex(row)
+            else:
+                combo.setCurrentIndex(0)  # 找不到 → 選第一筆（或改成 -1 代表不選）
 
     # ----------------- 新增的 slot -----------------
     def _sync_rows(self, value: int):
@@ -118,9 +129,10 @@ class SliceToolBar(QWidget):
 
         self.row2.spin.blockSignals(False)
         self.row3.spin.blockSignals(False)
+        self._on_img_row_change()
 
     def _on_img_row_change(self):
-        setting = self.slice_panel.save_setting()
+        setting = self.slice_panel.settings
         row_data = [
             self.row1.get_select(),
             self.row2.get_select(),
@@ -130,7 +142,7 @@ class SliceToolBar(QWidget):
             {
                 "img": self.slice_panel.data_manager.get_img(data["img_name"]),
                 "opacity": data["opacity"],
-                "cmap": setting[data["img_name"]],
+                "cmap": setting[data["img_name"]]["mode"],
             }
             for data in row_data
             if data["img_name"] != ""
