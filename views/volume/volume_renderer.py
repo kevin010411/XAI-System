@@ -73,7 +73,7 @@ class VolumeRenderer(QWidget):
         you're ready to draw.
         """
         if img_name in self._volumes and replace:
-            self.remove_volume(img_name, render=False)
+            self.remove_volume(img_name)
 
         # Prepare VTK image data (XYZ order for VTK)
         vol_xyz = np.ascontiguousarray(np.transpose(volume_data, (2, 1, 0)))
@@ -134,7 +134,7 @@ class VolumeRenderer(QWidget):
         """Toggle visibility of a registered volume and **re‑render**."""
         vol = self._volumes.get(volume_id)
         if vol is None:
-            print(f"[VolumeRenderer] unknown volume_id: {volume_id}")
+            print(f"[VolumeRenderer-show_volume] unknown volume_id: {volume_id}")
             return
         actor: vtk.vtkVolume = vol["actor"]
         actor.SetVisibility(visible)
@@ -170,7 +170,9 @@ class VolumeRenderer(QWidget):
         """
         vol = self._volumes.get(img_name)
         if vol is None:
-            print(f"[VolumeRenderer] unknown volume_id: {img_name}")
+            print(
+                f"[VolumeRenderer-update_transfer_function] unknown volume_id: {img_name}"
+            )
             return
         color_tf: vtk.vtkColorTransferFunction = vol["color_tf"]
         opacity_tf: vtk.vtkPiecewiseFunction = vol["opacity_tf"]
@@ -224,6 +226,10 @@ class VolumeRenderer(QWidget):
     def update(self, img, img_name):
         volume = img.get_fdata()
         self.update_volume(volume, img, img_name=img_name)
+
+    def rename_voluem(self, old_img_name, new_img_name):
+        self._volumes[new_img_name] = self._volumes[old_img_name]
+        del self._volumes[old_img_name]
 
     def remove_volume(self, volume_id: str) -> None:
         """Remove a volume from the scene and internal dict."""

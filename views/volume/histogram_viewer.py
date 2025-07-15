@@ -21,7 +21,7 @@ class HistogramComputeWorker(QRunnable):
 
 
 class HistogramViewer(QWidget):
-    histogram_ready = Signal()
+    calculate_done = Signal(dict)
 
     def __init__(self):
         super().__init__()
@@ -46,9 +46,9 @@ class HistogramViewer(QWidget):
             spine.set_visible(False)
         self.ax.axis("off")
 
-    def set_histogram(self, volume):
+    def calculate_histogram(self, volume):
         worker = HistogramComputeWorker(volume)
-        worker.signals.finished.connect(self._draw_histogram)
+        worker.signals.finished.connect(self._save_calculate_result)
         self.thread_pool.start(worker)
 
     def get_results(self):
@@ -75,4 +75,12 @@ class HistogramViewer(QWidget):
         self.ax.set_xlabel("Scalar Value")
         self.ax.set_ylabel("Density")
         self.canvas.draw()
-        self.histogram_ready.emit()
+
+    @Slot(np.ndarray, np.ndarray)
+    def _save_calculate_result(self, bins, counts):
+        self.calculate_done.emit(
+            {
+                "bins": bins,
+                "counts": counts,
+            }
+        )

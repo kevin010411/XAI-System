@@ -50,14 +50,6 @@ class SlicePanel(BasePanel):
 
         self.img_selector.currentIndexChanged.connect(self.on_img_selected)
 
-        # data改變時setting的改變邏輯
-        self.data_manager.img_name_list_model.rowsInserted.connect(
-            self._on_rows_inserted
-        )
-        self.data_manager.img_name_list_model.rowsRemoved.connect(self._on_rows_removed)
-        self.data_manager.img_name_list_model.dataChanged.connect(self._on_data_changed)
-        self.data_manager.img_name_list_model.modelReset.connect(self._on_model_reset)
-
     def _apply_settings_to_widgets(self, settings) -> None:
         """Push a settings‑dict into all widgets *without* triggering signals."""
         with QSignalBlocker(self.display_mode_selector):
@@ -125,6 +117,7 @@ class SlicePanel(BasePanel):
         """
         for img_name in self._row_name[first : last + 1]:
             del self.settings[img_name]
+        del self._row_name[first : last + 1]
 
     def _on_data_changed(self, topLeft, bottomRight, roles):
         """
@@ -149,7 +142,7 @@ class SlicePanel(BasePanel):
         重設 model：整份設定也重建
         """
         self.settings = [
-            self._create_slice_init_setting(s)
+            self._create_slice_init_setting(self.data_manager.get_img(s), s)
             for s in self.data_manager.img_name_list_model.stringList()
         ]
 

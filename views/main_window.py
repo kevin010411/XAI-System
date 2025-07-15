@@ -84,7 +84,6 @@ class MainWindow(QMainWindow):
         right_widget.set_pane(0, 1, volume_renderer)
         right_widget.set_pane(1, 0, self.slice_views[1], self.slice_toolbar[1])
         right_widget.set_pane(1, 1, self.slice_views[2], self.slice_toolbar[2])
-        # self.data_manager.register(volume_renderer)
 
         # Menu Bar設定
         # menu_bar = self.menuBar()
@@ -110,16 +109,6 @@ class MainWindow(QMainWindow):
         self.panel_selector.currentIndexChanged.connect(self.change_control_panel)
         self.tool_bar.addWidget(self.panel_selector)
         self.change_control_panel(0)  # 預設載入 InitPanel
-
-    def load_nifti(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "選擇 NIfTI 檔案", "", "NIfTI Files (*.nii.gz *.nii)"
-        )
-        if file_path:
-            try:
-                self.data_manager.load_nifti(file_path)
-            except Exception as e:
-                print("讀取失敗:", e)
 
     def change_control_panel(self, index):
         panel_info = self.select_panel[index]

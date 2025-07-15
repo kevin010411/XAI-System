@@ -70,12 +70,6 @@ class InitPanel(BasePanel):
             self.data_manager.get_img(self.img_selector.itemText(index))
         )
 
-    def update(self, img_name, img):
-        """更新 InitPanel 的內容，這裡可以顯示一些影像資訊。"""
-        super().update(img_name, img)
-        if self.img_selector.count() == 1:
-            self.on_img_selected(0)
-
     def _build_header_table(self, header) -> QTableWidget:
         keys = header.keys()
         table = QTableWidget(len(keys), 2)

@@ -133,11 +133,6 @@ class ModelPanel(BasePanel):
         self.worker.deleteLater()
         self.worker = None
 
-    def update(self, img_name, img):
-        """更新下拉選單，顯示目前載入的影像。"""
-        super().update(img_name, img)
-        self.img = img
-
 
 class PredictWorker(QThread):
 

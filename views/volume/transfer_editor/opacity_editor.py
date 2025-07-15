@@ -121,6 +121,20 @@ class OpacityEditor(QWidget):
         self._update_plot()
         # 還沒實現
 
+    def get_init_state(self, min_val, max_val):
+        self.canvas.set_range(min_val, max_val)
+        points = self.canvas.points
+        init_state = {
+            "points": [
+                {"x": x, "y": y, "color": rgb} for x, y, rgb in [points[0], points[-1]]
+            ],
+            "curves": [],
+            "min_val": min_val,
+            "max_val": max_val,
+        }
+        self.canvas.set_range(self.min_val, self.max_val)
+        return init_state
+
     def save_state(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "儲存 Transfer Function", "", "TF JSON (*.tf.json)"
