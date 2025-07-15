@@ -60,15 +60,21 @@ class SliceToolBar(QWidget):
         ]:
             sig.connect(self._on_model_data_changed)
 
+        slice_panel.display_mode_selector.currentIndexChanged.connect(
+            self._on_slice_display_change
+        )
+
         # Three placeholder rows, could be dynamic.
         self.row1 = SliceControlRow(self.img_name_list_model)
         self.row1.spin.setEnabled(False)
         self.row1.combo.setEnabled(False)
         self.row2 = SliceControlRow(self.img_name_list_model)
         self.row3 = SliceControlRow(self.img_name_list_model)
-        self.row1.combo.currentIndexChanged.connect(self._on_img_row_change)
-        self.row2.combo.currentIndexChanged.connect(self._on_img_row_change)
-        self.row3.combo.currentIndexChanged.connect(self._on_img_row_change)
+        self.row1.combo.currentIndexChanged.connect(self._on_img_change)
+        self.row2.combo.currentIndexChanged.connect(self._on_img_change)
+        self.row3.combo.currentIndexChanged.connect(self._on_img_change)
+        self.row2.spin.valueChanged.connect(self._spin_2_sync)
+        self.row3.spin.valueChanged.connect(self._spin_3_sync)
 
         # Frame for visual separation (optional)
         frame = QFrame()
@@ -100,6 +106,7 @@ class SliceToolBar(QWidget):
         self._sync_rows(val)
 
     def _on_model_data_changed(self):
+        """針對datamanger裡面的QStringListModel，因為多了一個空白的選項所以需要額外處理此事件"""
         combos = [self.row1.combo, self.row2.combo, self.row3.combo]
 
         # 1️⃣ 先記錄「目前選到的 row」
@@ -118,21 +125,41 @@ class SliceToolBar(QWidget):
             else:
                 combo.setCurrentIndex(0)  # 找不到 → 選第一筆（或改成 -1 代表不選）
 
-    # ----------------- 新增的 slot -----------------
     def _sync_rows(self, value: int):
         """保持 row2 + row3 == 100，row2 跟滑桿同步。"""
         self.row2.spin.blockSignals(True)
         self.row3.spin.blockSignals(True)
 
-        self.row2.spin.setValue(value)  # row2 = slider
-        self.row3.spin.setValue(100 - value)  # row3 = 補足 100
+        self.row2.spin.setValue(value)
+        self.row3.spin.setValue(100 - value)
 
         self.row2.spin.blockSignals(False)
         self.row3.spin.blockSignals(False)
-        self._on_img_row_change()
+        self._on_img_change()
 
-    def _on_img_row_change(self):
+    def _spin_2_sync(self, value: int):
+        self.row2.spin.blockSignals(True)
+        self.row3.spin.blockSignals(True)
+
+        self.slider.setValue(value)
+        self.row3.spin.setValue(100 - value)
+
+        self.row2.spin.blockSignals(False)
+        self.row3.spin.blockSignals(False)
+
+    def _spin_3_sync(self, value: int):
+        self.row2.spin.blockSignals(True)
+        self.row3.spin.blockSignals(True)
+
+        self.slider.setValue(100 - value)
+        self.row2.spin.setValue(100 - value)
+
+        self.row2.spin.blockSignals(False)
+        self.row3.spin.blockSignals(False)
+
+    def _on_img_change(self):
         setting = self.slice_panel.settings
+
         row_data = [
             self.row1.get_select(),
             self.row2.get_select(),
@@ -148,3 +175,15 @@ class SliceToolBar(QWidget):
             if data["img_name"] != ""
         ]
         self.slice_view.update(show_data)
+
+    def _on_slice_display_change(self):
+        img_name = self.slice_panel.img_selector.currentText()
+        if img_name == "":
+            return
+        row_data = [
+            self.row1.get_select()["img_name"],
+            self.row2.get_select()["img_name"],
+            self.row3.get_select()["img_name"],
+        ]
+        if img_name in row_data:
+            self._on_img_change()

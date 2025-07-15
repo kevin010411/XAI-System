@@ -2,9 +2,7 @@
 
 ## TODO
 
-1. 可以slice 3D volume
-2. 把資料管理合併為一個，並且也只有一個3D顯示與3個2D顯示
-3. 選擇要觀看哪個class結果與可解釋AI
+1. 選擇要觀看哪個class結果與可解釋AI
 
 ## 目的
 
@@ -92,7 +90,4 @@ Grad-CAM的熱力圖是一個本來就有關注度的數值的3D資料，但需�
 ### UI 介面
 
 napari : 專為 N-dimensional 醫學與生醫資料打造的 Python 視覺化平台
-
-### 3D Slicer
-
-目前很多使用者的UI組件庫
+3D Slicer : 醫學影像的開源程式

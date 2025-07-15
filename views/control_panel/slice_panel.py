@@ -28,28 +28,29 @@ class SlicePanel(BasePanel):
         self.display_mode_selector = QComboBox()
         self.display_mode_selector.addItems(self._DISPLAY_MODES)
         self.display_mode_selector.currentIndexChanged.connect(
-            self.change_slice_display_mode
+            self._on_disply_index_changed
         )
         mode_row.addWidget(self.display_mode_selector, 1)
         self.add_row_above_stretch(mode_row)
 
         # -------------------------- window row
+        # TODO 最大最小值裁減目前每有作用
         window_row = QHBoxLayout()
         window_row.addWidget(QLabel("Window Min-Max："))
 
         self.min_val_spin = QDoubleSpinBox()
         self.min_val_spin.setDecimals(2)
-        # self.min_val_spin.valueChanged.connect(self.on_window_changed)
         window_row.addWidget(self.min_val_spin)
 
         self.max_val_spin = QDoubleSpinBox()
         self.max_val_spin.setDecimals(2)
-        # self.max_val_spin.valueChanged.connect(self.on_window_changed)
         window_row.addWidget(self.max_val_spin)
 
         self.add_row_above_stretch(window_row)
 
         self.img_selector.currentIndexChanged.connect(self.on_img_selected)
+
+        # data改變時setting的改變邏輯
         self.data_manager.img_name_list_model.rowsInserted.connect(
             self._on_rows_inserted
         )
@@ -74,7 +75,7 @@ class SlicePanel(BasePanel):
             return  # nothing loaded
         # 1) Persist current settings before switching away
         if self._current_key is not None:
-            self.save_setting()
+            self.save_setting(self._current_key)
 
         # 2) Update current refs
         self._current_key = new_key
@@ -86,19 +87,12 @@ class SlicePanel(BasePanel):
         else:
             self._create_slice_init_setting(self._current_img, new_key)
 
-    def save_setting(self, img_name=None):
-        if img_name is not None:
-            self.settings[img_name] = {
-                "mode": self.display_mode_selector.currentText(),
-                "vmin": self.min_val_spin.value(),
-                "vmax": self.max_val_spin.value(),
-            }
-        else:
-            self.settings[self._current_key] = {
-                "mode": self.display_mode_selector.currentText(),
-                "vmin": self.min_val_spin.value(),
-                "vmax": self.max_val_spin.value(),
-            }
+    def save_setting(self, img_name):
+        self.settings[img_name] = {
+            "mode": self.display_mode_selector.currentText(),
+            "vmin": self.min_val_spin.value(),
+            "vmax": self.max_val_spin.value(),
+        }
         return self.settings
 
     def _create_slice_init_setting(self, img, img_name) -> None:
@@ -144,7 +138,7 @@ class SlicePanel(BasePanel):
             if old_name != "":
                 self._row_name[row] = new_img_name
                 self.settings[new_img_name] = self.settings[old_name]
-                del self.save_setting[old_name]
+                del self.settings[old_name]
             else:
                 self._row_name[row] = new_img_name
                 img = self.data_manager.get_img(new_img_name)
@@ -159,6 +153,5 @@ class SlicePanel(BasePanel):
             for s in self.data_manager.img_name_list_model.stringList()
         ]
 
-    def change_slice_display_mode(self, index: int) -> None:
-        """Change the display mode of all slice viewers."""
-        pass
+    def _on_disply_index_changed(self, index: int):
+        self.save_setting(self._current_key)

@@ -46,7 +46,6 @@ class SliceView(QWidget):
         self,
         view_type: str = "axial",
         show_in_volume_callback=None,
-        display_mode: str = "gray",
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -54,7 +53,6 @@ class SliceView(QWidget):
         # ---------- meta ----------
         self.show_in_volume_callback = show_in_volume_callback
         self.view_type = view_type
-        self._display_mode = display_mode
 
         # ---------- outer layout ----------
         outer = QVBoxLayout(self)
@@ -93,7 +91,7 @@ class SliceView(QWidget):
 
         # ---------- state ----------
         self.volume = None
-        self.slice_index = 0
+        self.slice_idx = 0
         self.rotation = 0
         self.zoom = 1.0
         self.pan_x = 0.0
@@ -107,17 +105,6 @@ class SliceView(QWidget):
         self.last_event = None
 
     # ===================== helpers =====================
-    def get_cmap(self):
-        match self._display_mode:
-            case "gray":
-                return "gray"
-            case "heatmap":
-                return "hot"
-            case "cold_to_hot":
-                return "coolwarm"
-            case _:
-                return "gray"
-
     def _extract_slice(self, vol: np.ndarray) -> np.ndarray:
         ax = self.view_type
         idx = self.slice_idx
@@ -126,6 +113,10 @@ class SliceView(QWidget):
         if ax == "coronal":
             return vol[:, idx, :]
         return vol[:, :, idx]
+
+    @staticmethod
+    def _alpha(opacity):
+        return opacity / 100.0 if opacity > 1 else opacity
 
     @staticmethod
     def _pad_or_crop_center(img: np.ndarray, side: int) -> np.ndarray:
@@ -181,19 +172,15 @@ class SliceView(QWidget):
             return
         self.render()
 
-    def change_display_mode(self, mode: str):
-        """Change the display mode of this slice viewer."""
-        self._display_mode = mode
-        self.render()
-
     # ===================== rendering =====================
     def render(self):
+        self.ax.clear()
 
         if not self.layers:  # 沒有任何 layer ⇒ 直接 refresh 畫布
             self.fig.canvas.draw_idle()
             return
 
-        # --- choose slice ---
+        # ---------- 第一層 ----------
         base_slice = self._extract_slice(self.layers[0]["data"])
         h0, w0 = base_slice.shape
         side = max(h0, w0)
@@ -208,16 +195,17 @@ class SliceView(QWidget):
             np.rot90(base_sq, self.rotation),
             cmap=cmap[self.layers[0]["cmap"]],
             origin="upper",
-            alpha=self.layers[0]["opacity"] / 100.0,
+            alpha=self._alpha(self.layers[0]["opacity"]),
         )
 
+        # ---------- 其餘層 ----------
         for lyr in self.layers[1:]:
             slc = self._pad_or_crop_center(self._extract_slice(lyr["data"]), side)
             self.ax.imshow(
                 np.rot90(slc, self.rotation),
                 cmap=cmap[lyr["cmap"]],
                 origin="upper",
-                alpha=lyr["opacity"],
+                alpha=self._alpha(lyr["opacity"]),
             )
 
         self.fig.canvas.draw_idle()
@@ -231,24 +219,24 @@ class SliceView(QWidget):
     def show_slice_in_volume(self):
         if self.show_in_volume_callback and self.volume is not None:
             if self.view_type == "axial":
-                img2d = self.volume[self.slice_index, :, :]
+                img2d = self.volume[self.slice_idx, :, :]
             elif self.view_type == "coronal":
-                img2d = self.volume[:, self.slice_index, :]
+                img2d = self.volume[:, self.slice_idx, :]
             elif self.view_type == "sagittal":
-                img2d = self.volume[:, :, self.slice_index]
+                img2d = self.volume[:, :, self.slice_idx]
             else:
                 img2d = None
             self.show_in_volume_callback(
-                self.view_type, self.slice_index, img2d, remove=not self.show_slice
+                self.view_type, self.slice_idx, img2d, remove=not self.show_slice
             )
 
     def on_scroll(self, event):
-        if self.volume is None:
+        if not hasattr(self, "layers") or self.layers is None:
             return
         idx = {"axial": 0, "coronal": 1, "sagittal": 2}[self.view_type]
-        max_idx = self.volume.shape[idx] - 1
-        self.slice_index = int(
-            np.clip(self.slice_index + (1 if event.step > 0 else -1), 0, max_idx)
+        max_idx = self.layers[0]["data"].shape[idx] - 1
+        self.slice_idx = int(
+            np.clip(self.slice_idx + (1 if event.step > 0 else -1), 0, max_idx)
         )
         self.render()
         self.show_slice_in_volume()
