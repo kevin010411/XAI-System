@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QEvent
 
 
 class PaneWrapper(QWidget):
@@ -17,11 +17,12 @@ class PaneWrapper(QWidget):
         content: QWidget,
         owner: "Split2x2Window",
         pane_id: tuple[int, int],
-        pin_widget=None,
+        pin_widget: QWidget = None,
     ):
         super().__init__()
         self._owner = owner
         self._pane_id = pane_id
+        self.pin_widget = None
 
         self.setStyleSheet("border: 1px solid #888;")
 
@@ -49,6 +50,9 @@ class PaneWrapper(QWidget):
         lay.addWidget(self._toolbar)
         lay.addWidget(content)
 
+        self._top_widget = self._toolbar.window()
+        self._top_widget.installEventFilter(self)
+
     # ----- 切換全螢幕 -----
     def _toggle_fullscreen(self, checked: bool):
         if checked:
@@ -63,18 +67,59 @@ class PaneWrapper(QWidget):
         if self.pin_widget is None:
             return
         if checked:
-            btn = self._toolbar.widgetForAction(self._pin_toggle)
-            if btn:  # 正常情況都有
-                origin = btn.mapToGlobal(btn.rect().bottomLeft())
-            else:  # 保險做法：用 actionGeometry
-                rect = self._toolbar.actionGeometry(self._pin_toggle)
-                origin = self._toolbar.mapToGlobal(rect.bottomLeft())
-                # 2️⃣ 略微往下偏移，避免陰影/框線重疊
-            self.pin_widget.move(origin + QPoint(0, 4))
             self.pin_widget.show()
             self.pin_widget.raise_()
+            self._reposition_pin_widget()
         else:
             self.pin_widget.hide()
+
+    def _reposition_pin_widget(self):  # 🔹
+        """把 pin_widget 黏在 📌 按鈕正下方 (偏移 4px)"""
+        if self.pin_widget is None or not self.pin_widget.isVisible():
+            return
+        btn = self._toolbar.widgetForAction(self._pin_toggle)
+        if btn:
+            origin = btn.mapToGlobal(btn.rect().bottomLeft())
+        else:  # 理論上不會執行
+            rect = self._toolbar.actionGeometry(self._pin_toggle)
+            origin = self._toolbar.mapToGlobal(rect.bottomLeft())
+        self.pin_widget.move(origin + QPoint(0, 4))
+
+    def moveEvent(self, ev):
+        super().moveEvent(ev)
+        self._reposition_pin_widget()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._reposition_pin_widget()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        # 確保監聽到真正的 window (第一次 show 之後才穩定)
+        top = self.window()
+        if top is not self._top_widget:
+            self._top_widget.removeEventFilter(self)
+            self._top_widget = top
+            self._top_widget.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if obj is not self._top_widget:
+            return super().eventFilter(obj, ev)
+
+        match ev.type():
+            case QEvent.Move:
+                self._reposition_pin_widget()
+            case QEvent.Resize:
+                self._reposition_pin_widget()
+            case QEvent.WindowDeactivate:
+                if self.pin_widget is not None:
+                    self.pin_widget.hide()
+            case QEvent.WindowActivate:
+                if self._pin_toggle.isChecked():
+                    self.pin_widget.show()
+                    self._reposition_pin_widget()
+
+        return super().eventFilter(obj, ev)
 
 
 class Split2x2Window(QWidget):
