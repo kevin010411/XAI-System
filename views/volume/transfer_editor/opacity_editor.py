@@ -117,7 +117,7 @@ class OpacityEditor(QWidget):
         self._update_plot()
 
     def toggle_merge(self):
-        self.canvas.display_points = not self.canvas.display_points
+        self.canvas.merge_mode = not self.canvas.merge_mode
         self._update_plot()
         # 還沒實現
 

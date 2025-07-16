@@ -21,12 +21,12 @@ class OpacityCurveCanvas(FigureCanvas):
 
         self.on_change_callback = on_change_callback
 
-        self.display_points = True
+        self.merge_mode = False
         self.dragging_point_index = None
         self.selected_point_index = None
 
         self.x_min, self.x_max = x_range
-        self.points = points or [
+        self.points: list[tuple[int, int, int]] = points or [
             (self.x_min, 0.0, (0, 0, 1)),
             (self.x_max, 1.0, (1, 0, 0)),
         ]
@@ -60,7 +60,7 @@ class OpacityCurveCanvas(FigureCanvas):
         self.mpl_connect("button_release_event", self._on_release)
 
     def _on_pick(self, evt):
-        if not self.display_points or evt.artist is not self.scatter:
+        if self.merge_mode or evt.artist is not self.scatter:
             return
         idx = int(evt.ind[0])
         mouse = evt.mouseevent
@@ -78,7 +78,7 @@ class OpacityCurveCanvas(FigureCanvas):
         """
         只處理左鍵 + 在軸內 + 未 pick 到點 的情況：新增控制點
         """
-        if not (self.display_points and evt.inaxes == self.ax and evt.button == 1):
+        if not (not self.merge_mode and evt.inaxes == self.ax and evt.button == 1):
             return
         # 若不是點在既有點上（pick_event 不會設定 dragging_idx），就新增
         if (
@@ -143,37 +143,58 @@ class OpacityCurveCanvas(FigureCanvas):
     def update_points(
         self,
         points,
-        curve_list=None,
+        curve_list=[],
     ):
         self.points = sorted(points, key=lambda p: p[0])
-        if not self.points:
-            return
-        # 2. 拆解 x/y/color
-        xs, ys, cs = map(np.array, zip(*points))
-        # 3. 更新主曲線
-        self._update_line_collection(xs, ys)
-        # 4. 更新點標記
-        self._update_point_artists(xs, ys, cs)
-        # 5. 畫 normal_curve
-        self._update_curve(curve_list)
-        # 6. 強制刷新
+        self.curve_list = curve_list
+        # 1. 更新主曲線
+        self._update_line_collection()
+        # 2. 更新點標記
+        self._update_point_artists()
+        # 3. 畫曲線
+        self._update_curve()
+        # 4. 強制刷新
         self._rescale_and_redraw()
 
-    def _update_line_collection(self, xs, ys):
-        segments = [
-            [(xs[i], ys[i]), (xs[i + 1], ys[i + 1])] for i in range(len(xs) - 1)
-        ]
+    def _update_line_collection(self):
+        xs, ys, cs = map(np.array, zip(*self.points))
+        if self.merge_mode:
+            x_values = np.linspace(self.x_min, self.x_max, 200)
+            ys_uniform = list(np.interp(x_values, xs, ys))
+            for curve_data in self.curve_list:
+                if curve_data["type"] == "normal_curve":
+                    mean: float = curve_data["mean"]
+                    std: float = curve_data["std"]
+                    ys_values: list[float] = [
+                        self.get_normal_y(x, mean, std) for x in x_values
+                    ]
+                    ys_uniform: list[np.float64] = [
+                        line_y + curve_y
+                        for line_y, curve_y in zip(ys_values, ys_uniform)
+                    ]
+            segments = [
+                [
+                    (x_values[i], np.clip(ys_uniform[i], 0, 1)),
+                    (x_values[i + 1], np.clip(ys_uniform[i + 1], 0, 1)),
+                ]
+                for i in range(len(x_values) - 1)
+            ]
+        else:
+            segments = [
+                [(xs[i], ys[i]), (xs[i + 1], ys[i + 1])] for i in range(len(xs) - 1)
+            ]
         self.line_collection.set_segments(segments)
         self.line_collection.set_colors(["black"] * (len(xs) - 1))
 
-    def _update_point_artists(self, xs, ys, cs):
+    def _update_point_artists(self):
         # 先移除舊的 artist
         if self.scatter in self.ax.collections:
             self.scatter.remove()
 
-        if not self.display_points:
+        if self.merge_mode:
             return
 
+        xs, ys, cs = map(np.array, zip(*self.points))
         sizes = np.where(
             np.arange(len(xs)) == (self.selected_point_index or -1), 100, 50
         )
@@ -185,13 +206,16 @@ class OpacityCurveCanvas(FigureCanvas):
             xs, ys, s=sizes, c=cs, edgecolors=edge, linewidths=1.5, zorder=3, picker=5
         )
 
-    def _update_curve(self, curve_list):
+    def _update_curve(self):
         # 先清除所有舊 normal 線條
         for line in self.normal_lines:
             line.remove()  # 從 axes 移除這條線
         self.normal_lines = []
 
-        for curve_data in curve_list or []:
+        if self.merge_mode:
+            return
+
+        for curve_data in self.curve_list:
             if curve_data["type"] == "normal_curve":
                 mean = curve_data["mean"]
                 std = curve_data["std"]
@@ -200,11 +224,12 @@ class OpacityCurveCanvas(FigureCanvas):
                 (line,) = self.ax.plot(
                     x_values, y_values, "--", color="gray", alpha=0.8
                 )
-                size = 0.05
+                mid_idx = len(x_values) // 2
+                square_size = 0.05
                 rect = patches.Rectangle(
-                    (mean - size / 2, size * 2 - size),
-                    size,
-                    size * 2,
+                    (x_values[mid_idx], 0),
+                    square_size,
+                    square_size * 2,
                     color="red",
                     picker=True,
                 )
@@ -227,7 +252,7 @@ class OpacityCurveCanvas(FigureCanvas):
             old_xmax - old_xmin or 1
         )
 
-        def reproject(i, x, y, c, r):
+        def reproject(i, x, y, c, r) -> tuple[float, float, float]:
             if i == 0:  # 左端
                 return (self.x_min, y, c)
             if i == len(self.points) - 1:  # 右端
