@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from logging import warning
 from collections import defaultdict
 from typing import Callable, Dict, List, Sequence, Tuple
 
@@ -67,16 +66,9 @@ class SlidingGradCAM3D:
 
         if self.layers is not None:
             # register hooks --------------------------------------------------
+            self.layers = [self._resolve_layer(layer) for layer in self.layers]
             for layer in self.layers:
-                lname = self._layer_name(layer)
-
-                def _fwd_hook(_, __, out, lname=lname):
-                    self._acts[lname] = out.detach()  # save act
-                    out.register_hook(
-                        lambda g, lname=lname: self._grads.__setitem__(lname, g)
-                    )
-
-                layer.register_forward_hook(_fwd_hook)
+                self._register_one(layer)
 
         # final output after .final()
         self.output: Tuple[torch.Tensor, Dict[str, torch.Tensor]] | None = None
@@ -169,6 +161,7 @@ class SlidingGradCAM3D:
         - 會先解除舊 hooks，再註冊新 hooks。
         """
         if self.model is None:
+            warning("沒有model不能設定target_layers")
             return
 
         # 1) 解除舊 hooks
@@ -178,9 +171,9 @@ class SlidingGradCAM3D:
         if not isinstance(targets, (list, tuple)):
             targets = [targets]
 
+        self.layers = [self._resolve_layer(target) for target in targets]
         # 3) 逐一註冊
-        for t in targets:
-            layer = self._resolve_layer(t)
+        for layer in self.layers:
             self._register_one(layer)
 
     def clear_hooks(self):
@@ -191,7 +184,7 @@ class SlidingGradCAM3D:
         self._acts.clear()
         self._grads.clear()
 
-    def _register_one(self, layer: nn.Module):
+    def _register_one(self, layer: torch.nn.Module):
         lname = self._layer_name(layer)
 
         def _fwd_hook(_, __, out, lname=lname):

@@ -225,7 +225,6 @@ class ModelPanel(BasePanel):
         """處理預測結果"""
         self.predict_button.setEnabled(True)
         pred_img, heat_maps = result
-        breakpoint()
         for layer_name, heatmap in heat_maps:
             self.data_manager.add_img(f"heatmap-{layer_name}", heatmap)
         self.data_manager.add_img("predicted", pred_img)
@@ -268,15 +267,10 @@ class PredictWorker(QThread):
         self.transform = transform
         self.input_data = input_data
         self.config = config
-        self.xai = SlidingGradCAM3D(
-            model=model,
-            target_layers=[model.bottleneck, model.out_block],
-            class_selector=lambda p: torch.tensor([[1]]),  # 產兩個類別 heatmap
-        )
-        # self.xai = build_xai(config.xai_method)
-        # self.xai.set_model(self.model)
-        # self.xai.set_target_layers(target_layer)
-        # self.xai.set_class(lambda p: torch.tensor([[1]]))
+        self.xai = build_xai(config.xai_method)
+        self.xai.set_model(self.model)
+        self.xai.set_target_layers(target_layer)
+        self.xai.set_class(lambda p: torch.tensor([[1]]))
         self.pbar = self.ProgressProxy(self.update, self.reset)
 
     def run(self):
