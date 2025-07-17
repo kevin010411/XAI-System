@@ -6,7 +6,7 @@ from typing import Callable, Dict, List, Sequence, Tuple
 import torch
 import torch.nn.functional as F
 
-from ..utils import mem_watch
+from ..utils import mem_watch, XAI
 
 # -------------------------------------------------------------
 # Helper – spatial averaging over N dims (2D or 3D)
@@ -17,6 +17,7 @@ def _spatial_mean(t: torch.Tensor) -> torch.Tensor:
     return t.mean(dim=tuple(range(2, t.ndim)), keepdim=True)
 
 
+@XAI.register_module()
 class SlidingGradCAM3D:
     """Grad‑CAM callback set for sliding‑window pipeline.
 
@@ -40,8 +41,8 @@ class SlidingGradCAM3D:
 
     def __init__(
         self,
-        model: torch.nn.Module,
-        target_layers: Sequence[torch.nn.Module],
+        model: torch.nn.Module = None,
+        target_layers: Sequence[torch.nn.Module] = None,
         *,
         class_selector: Callable[[torch.Tensor], torch.LongTensor] | None = None,
         upsample_mode: str | None = None,
@@ -62,17 +63,18 @@ class SlidingGradCAM3D:
             defaultdict(list)
         )
 
-        # register hooks --------------------------------------------------
-        for layer in self.layers:
-            lname = self._layer_name(layer)
+        if self.layers is not None:
+            # register hooks --------------------------------------------------
+            for layer in self.layers:
+                lname = self._layer_name(layer)
 
-            def _fwd_hook(_, __, out, lname=lname):
-                self._acts[lname] = out.detach()  # save act
-                out.register_hook(
-                    lambda g, lname=lname: self._grads.__setitem__(lname, g)
-                )
+                def _fwd_hook(_, __, out, lname=lname):
+                    self._acts[lname] = out.detach()  # save act
+                    out.register_hook(
+                        lambda g, lname=lname: self._grads.__setitem__(lname, g)
+                    )
 
-            layer.register_forward_hook(_fwd_hook)
+                layer.register_forward_hook(_fwd_hook)
 
         # final output after .final()
         self.output: Tuple[torch.Tensor, Dict[str, torch.Tensor]] | None = None
@@ -88,6 +90,8 @@ class SlidingGradCAM3D:
         self._grads.clear()
 
     def post(self, pred_tuple, patch_slices, step: int):  # noqa: D401
+        if self.model is None:
+            warning("SlidingGradCAM3D did not have model to observe")
         preds: torch.Tensor = pred_tuple[0]
         sel = self.class_selector(preds)  # (B, N_cls)
         B, n_cls = sel.shape  # variable n_cls allowed
@@ -149,9 +153,58 @@ class SlidingGradCAM3D:
         # provide combined output
         self.output = (results, stitched)
 
-    # ------------------------------------------------------------------
-    # Utility
-    # ------------------------------------------------------------------
+    def set_model(self, model: torch.nn.Module):
+        self.model = model
+
+    def set_target_layers(self, targets):
+        """
+        targets: str / nn.Module / list / tuple
+        - 若傳入單一元素，也會自動轉 list。
+        - 會先解除舊 hooks，再註冊新 hooks。
+        """
+        # 1) 解除舊 hooks
+        self.clear_hooks()
+
+        # 2) 標準化成 list
+        if not isinstance(targets, (list, tuple)):
+            targets = [targets]
+
+        # 3) 逐一註冊
+        for t in targets:
+            layer = self._resolve_layer(t)
+            self._register_one(layer)
+
+    def clear_hooks(self):
+        """移除所有 hooks 並清空暫存。"""
+        for h in self._handles.values():
+            h.remove()
+        self._handles.clear()
+        self._acts.clear()
+        self._grads.clear()
+
+    def _register_one(self, layer: nn.Module):
+        lname = self._layer_name(layer)
+
+        def _fwd_hook(_, __, out, lname=lname):
+            self._acts[lname] = out.detach()
+            out.register_hook(lambda g, lname=lname: self._grads.__setitem__(lname, g))
+
+        h = layer.register_forward_hook(_fwd_hook)
+        self._handles[lname] = h
+
+    def _resolve_layer(self, target):
+        # 允許 nn.Module 或字串名稱
+        if isinstance(target, nn.Module):
+            return target
+        elif isinstance(target, str):
+            try:
+                return dict(self.model.named_modules())[target]
+            except KeyError:
+                raise ValueError(f"No layer named {target}")
+        else:
+            raise TypeError("target 必須是 nn.Module 或 str")
+
+    # ----- Utility -----
     @staticmethod
     def _layer_name(layer: torch.nn.Module) -> str:
         return layer.__class__.__name__ + f"@{id(layer):x}"

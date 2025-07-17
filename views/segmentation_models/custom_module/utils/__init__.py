@@ -1,12 +1,14 @@
-from .build import build_model, MODELS, TRANSFORMS, build_transform
+from .build import MODELS, TRANSFORMS, XAI, build_transform, build_model, build_xai
 from .inference import sliding_window_inference
 from .utils import mem_watch
 
 __all__ = [
-    "build_model",
     "MODELS",
     "TRANSFORMS",
+    "XAI",
+    "build_model",
     "build_transform",
+    "build_xai",
     "sliding_window_inference",
     "mem_watch",
 ]

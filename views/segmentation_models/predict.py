@@ -3,12 +3,11 @@ from mmengine import Config
 import numpy as np
 import torch
 import nibabel as nib
-from custom_module.utils import build_model, build_transform
+from .custom_module.utils import build_model, build_transform
+from .custom_module.utils import sliding_window_inference
+from .custom_module.xai import SlidingGradCAM3D
 
 # from monai.inferers import sliding_window_inference
-
-from custom_module.utils import sliding_window_inference
-from custom_module.xai import SlidingGradCAM3D
 
 
 def parse_args():
