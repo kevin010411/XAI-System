@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
                 "widget": self.slice_panel,
             },
             {
-                "label": "Modle Control Panel",
+                "label": "Model Control Panel",
                 "widget": self.model_panel,
             },
         ]

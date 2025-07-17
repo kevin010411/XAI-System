@@ -1,6 +1,19 @@
 from logging import warning
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
-from PySide6.QtCore import QThread, Signal, Slot, QObject
+import base64
+from PySide6.QtWidgets import (
+    QWidget,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QListWidget,
+    QListWidgetItem,
+    QGroupBox,
+    QAbstractItemView,
+)
+from PySide6.QtCore import QThread, Signal, Slot, QObject, Qt
+
 from mmengine import Config
 import numpy as np
 import torch
@@ -12,6 +25,7 @@ from ..segmentation_models.custom_module import (
     build_model,
     sliding_window_inference,
     build_transform,
+    build_xai,
     SlidingGradCAM3D,
 )
 
@@ -21,6 +35,7 @@ class ModelPanel(BasePanel):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.selector_label.setText("辨識圖像:")
+        self.img_selector.currentIndexChanged.connect(self.on_img_change)
 
         model_row = QHBoxLayout()
         self.model_select_label = QLabel("辨識模型：")
@@ -37,6 +52,7 @@ class ModelPanel(BasePanel):
         self.model_object = None
         self.transform = None
         self.config: Config | None = None
+        self.target_layer = []
 
         self.info_box = CollapsibleBox("模型資訊")
         self.layout.insertWidget(self._stretch_idx, self.info_box)
@@ -97,7 +113,93 @@ class ModelPanel(BasePanel):
             QLabel(f"架構：{self.config.model['type']}", wordWrap=True)
         )
 
+        self._initializing = True
+        self.info_box.add_widget(self.create_target_layer_widget(model))
+        self._initializing = False
+
         self.info_box.toggle_btn.setChecked(True)
+
+    def create_target_layer_widget(self, model):
+        group = QGroupBox("Target Layer")
+        group.setCheckable(True)  # 允許收合/展開
+        group.setChecked(True)
+
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QAbstractItemView.NoSelection)
+        self.list_widget.setDragEnabled(False)
+        self.list_widget.setDragDropMode(QAbstractItemView.NoDragDrop)
+
+        list_style = f"""
+        QListWidget {{
+            background: #000000;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            padding: 4px;
+            color: #dedcdc;
+        }}
+        QListWidget::item {{
+            height: 24px;
+            padding-left: 4px;  /* space between checkbox and text */
+        }}
+        QListWidget::item:hover {{
+            background: #636262;
+        }}
+        QListWidget::indicator {{
+            width: 18px;
+            height: 18px;
+        }}
+        QScrollBar:vertical {{
+            width: 12px;
+            background: transparent;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: #c0c0c0;
+            border-radius: 6px;
+            min-height: 20px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: #a6a6a6;
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        """
+
+        self.list_widget.setStyleSheet(list_style)
+
+        for idx, (name, layer) in enumerate(model.named_children()):
+            item = QListWidgetItem(f"[{idx}] {name}: {layer.__class__.__name__}")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            # Keep a reference to the actual layer for convenience
+            item.setData(Qt.UserRole, name)
+            self.list_widget.addItem(item)
+        group_layout.addWidget(self.list_widget)
+
+        group.toggled.connect(self.list_widget.setVisible)
+        self.list_widget.itemChanged.connect(self._on_item_changed)
+
+        return group
+
+    def _on_item_changed(self, _):
+        """勾選狀態改變 → 立即回調。"""
+        if self._initializing:
+            return
+        selected: list[str] = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                layer_name: str = item.data(Qt.UserRole)
+                selected.append(layer_name)
+        self.target_layer = selected
+
+    def on_img_change(self, index: int):
+        new_img_name = self.img_selector.currentText()
+        self.img = self.data_manager.get_img(new_img_name)
 
     def on_predict_clicked(self):
         """當按下預測按鈕時，開始進行預測。"""
@@ -111,6 +213,7 @@ class ModelPanel(BasePanel):
             transform=self.transform,
             input_data=self.img,
             config=self.config,
+            target_layer=self.target_layer,
         )
         self.worker.pred_done.connect(self.on_predict_done)
         self.worker.finished.connect(self._cleanup_worker)
@@ -122,6 +225,7 @@ class ModelPanel(BasePanel):
         """處理預測結果"""
         self.predict_button.setEnabled(True)
         pred_img, heat_maps = result
+        breakpoint()
         for layer_name, heatmap in heat_maps:
             self.data_manager.add_img(f"heatmap-{layer_name}", heatmap)
         self.data_manager.add_img("predicted", pred_img)
@@ -155,7 +259,9 @@ class PredictWorker(QThread):
     update = Signal(int)  # 送出「已完成 n 步」或「目前進度值」
     reset = Signal(int, str)  # 送出「請把進度條重設到 0」
 
-    def __init__(self, model, transform, input_data, config):
+    def __init__(
+        self, model, transform, input_data, target_layer, config, xai_config=None
+    ):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
@@ -167,6 +273,10 @@ class PredictWorker(QThread):
             target_layers=[model.bottleneck, model.out_block],
             class_selector=lambda p: torch.tensor([[1]]),  # 產兩個類別 heatmap
         )
+        # self.xai = build_xai(config.xai_method)
+        # self.xai.set_model(self.model)
+        # self.xai.set_target_layers(target_layer)
+        # self.xai.set_class(lambda p: torch.tensor([[1]]))
         self.pbar = self.ProgressProxy(self.update, self.reset)
 
     def run(self):
@@ -203,6 +313,7 @@ class PredictWorker(QThread):
                     )
                     for layer_name, heatmap in heatmaps.items()
                 ]
+
                 pred_img = (pred_img, heat_imgs)
         except Exception as e:
             print("PredictWorker error:", e)

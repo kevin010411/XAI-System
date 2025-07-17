@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Callable, Dict, List, Sequence, Tuple
 
 import torch
+from torch import Tensor
 import torch.nn.functional as F
 
 from ..utils import mem_watch, XAI
@@ -48,7 +49,7 @@ class SlidingGradCAM3D:
         upsample_mode: str | None = None,
     ) -> None:
         self.model = model
-        self.layers = list(target_layers)
+        self.layers = list(target_layers or [])
         self.class_selector = class_selector or (
             lambda p: p.flatten(2).mean(-1).topk(1, dim=1).indices  # [B, 2]
         )
@@ -57,6 +58,7 @@ class SlidingGradCAM3D:
         # caches for every forward pass
         self._acts: Dict[str, torch.Tensor] = {}
         self._grads: Dict[str, torch.Tensor] = {}
+        self._handles = {}
 
         # storage across all patches – {layer_name: [(batch_idx,slice,heat), ...]}
         self._stash: Dict[str, List[Tuple[int, Tuple[slice, ...], torch.Tensor]]] = (
@@ -105,14 +107,15 @@ class SlidingGradCAM3D:
             loss.backward(retain_graph=True)
 
             for lname, act in self._acts.items():
-                grad = self._grads[lname]
-                w = _spatial_mean(grad)  # (B, C, 1, 1[,1])
-                heat = F.relu((w * act).sum(dim=1, keepdim=True))  # (B,1,*)
+                grad: Tensor = self._grads[lname]
+                w: Tensor = _spatial_mean(grad)  # (B, C, 1, 1[,1])
+                heat: Tensor = F.relu((w * act).sum(dim=1, keepdim=True))  # (B,1,*)
 
                 # Spatial upsample to match pred resolution
                 mode = self.upsample_mode
                 if mode is None:
                     mode = "trilinear" if heat.ndim == 5 else "bilinear"
+
                 heat = F.interpolate(
                     heat,
                     size=preds.shape[2:],
@@ -156,12 +159,18 @@ class SlidingGradCAM3D:
     def set_model(self, model: torch.nn.Module):
         self.model = model
 
+    def set_class(self, class_selector):
+        self.class_selector = class_selector
+
     def set_target_layers(self, targets):
         """
         targets: str / nn.Module / list / tuple
         - 若傳入單一元素，也會自動轉 list。
         - 會先解除舊 hooks，再註冊新 hooks。
         """
+        if self.model is None:
+            return
+
         # 1) 解除舊 hooks
         self.clear_hooks()
 
@@ -194,7 +203,7 @@ class SlidingGradCAM3D:
 
     def _resolve_layer(self, target):
         # 允許 nn.Module 或字串名稱
-        if isinstance(target, nn.Module):
+        if isinstance(target, torch.nn.Module):
             return target
         elif isinstance(target, str):
             try:

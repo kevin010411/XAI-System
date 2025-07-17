@@ -14,6 +14,12 @@ class DataManager:
         self.current_key = None
         self.observers: list[QDockWidget] = []
 
+    def add_img_name_to_list_model(self, img_name):
+        row = self.img_name_list_model.rowCount()
+        self.img_name_list_model.insertRow(row)
+        idx = self.img_name_list_model.index(row)
+        self.img_name_list_model.setData(idx, img_name)
+
     def load_nifti(self, file_path):
         name = os.path.basename(file_path)
         if name not in self.imgs:
@@ -23,10 +29,7 @@ class DataManager:
             transformed_data = nib.orientations.apply_orientation(img_data, ornt)
             img = nib.Nifti1Image(transformed_data, np.eye(4))  # canonical affine
             self.imgs[name] = img
-            row = self.img_name_list_model.rowCount()
-            self.img_name_list_model.insertRow(row)
-            idx = self.img_name_list_model.index(row)
-            self.img_name_list_model.setData(idx, name)
+            self.add_img_name_to_list_model(name)
         self.set_current(name)
 
     def set_current(self, key):
@@ -68,13 +71,14 @@ class DataManager:
                 return r
         return -1
 
-    # def add_img(self, image_name, image_data):
-    #     """新增影像到 imgs 字典中"""
-    #     if image_name not in self.imgs:
-    #         self.imgs[image_name] = image_data
-    #     for observer in self.observers:
-    #         if isinstance(observer, BasePanel):
-    #             BasePanel.update(observer, image_data)
+    def add_img(self, image_name, image_data):
+        """新增影像到 imgs 字典中"""
+        if image_name not in self.imgs:
+            self.imgs[image_name] = image_data
+            self.add_img_name_to_list_model(image_name)
+        for observer in self.observers:
+            if isinstance(observer, BasePanel):
+                BasePanel.update(observer, image_data)
 
     def register(self, observer):
         self.observers.append(observer)
