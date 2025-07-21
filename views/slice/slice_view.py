@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import numpy as np
 import nibabel as nib
-from ..utils import wrap_with_frame
 
 BTN_STYLE = """
 QPushButton {
@@ -28,11 +27,6 @@ QPushButton:pressed {
 }
 """
 
-_VIEW_LABEL = {
-    "axial": "Axial (Z)",
-    "coronal": "Coronal (Y)",
-    "sagittal": "Sagittal (X)",
-}
 _AXIS_IDX = {"axial": 0, "coronal": 1, "sagittal": 2}
 
 DisplayMode = ["gray", "heatmap", "cold_to_hot"]
@@ -97,6 +91,7 @@ class SliceView(QWidget):
         self.pan_x = 0.0
         self.pan_y = 0.0
         self.show_slice = False
+        self.layers = []
 
         # ---------- Matplotlib events ----------
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
@@ -150,23 +145,31 @@ class SliceView(QWidget):
                 self.ax.clear()  # 或 self.ax.clear()
                 self.fig.canvas.draw_idle()
                 return
+            prev_layers = {data["img_name"] for data in self.layers}
+            change_slice_index = False
             self.layers = []
             for lyr in layers:
                 img: nib.Nifti1Image = lyr["img"]
                 arr = np.transpose(nib.as_closest_canonical(img).get_fdata(), (2, 1, 0))
                 self.layers.append(
                     {
+                        "img_name": lyr["img_name"],
                         "data": arr,
                         "opacity": float(lyr.get("opacity", 1.0)),
                         "cmap": lyr.get("cmap", "gray"),
                     }
                 )
+                if lyr["img_name"] not in prev_layers:
+                    change_slice_index = True
+
             # spacing 取第一層
             self.spacing = nib.as_closest_canonical(
                 layers[0]["img"]
             ).header.get_zooms()[:3]
             shape0 = self.layers[0]["data"].shape
-            self.slice_idx = shape0[_AXIS_IDX[self.view_type]] // 2
+            if change_slice_index:
+                self.slice_idx = shape0[_AXIS_IDX[self.view_type]] // 2
+
         else:  # 單張 image
             self.update([{"img": layers, "opacity": 1.0, "cmap": "gray"}])
             return

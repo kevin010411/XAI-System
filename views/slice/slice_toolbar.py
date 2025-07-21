@@ -167,6 +167,7 @@ class SliceToolBar(QWidget):
         ]
         show_data = [
             {
+                "img_name": data["img_name"],
                 "img": self.slice_panel.data_manager.get_img(data["img_name"]),
                 "opacity": data["opacity"],
                 "cmap": setting[data["img_name"]]["mode"],
