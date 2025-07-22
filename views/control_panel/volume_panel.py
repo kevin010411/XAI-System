@@ -23,6 +23,16 @@ class VolumePanel(BasePanel):
         self.visibility_button.setCheckable(True)
         self.visibility_button.setChecked(False)
         self.visibility_button.clicked.connect(self.set_volume_visible)
+        self.visibility_button.setStyleSheet(
+            """
+                QPushButton {
+                    background-color: #f6f6f6;       /* 未勾選顏色 */
+                }
+                QPushButton:checked {
+                    background-color: #8785a2;       /* 勾選顏色 */
+                }
+            """
+        )
         self.selector_row.insertWidget(0, self.visibility_button)
 
         self.volume_renderer = volume_renderer

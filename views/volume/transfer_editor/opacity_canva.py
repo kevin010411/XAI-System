@@ -21,6 +21,9 @@ class OpacityCurveCanvas(FigureCanvas):
 
         self.on_change_callback = on_change_callback
 
+        self.rectangles = []
+        self.dragging_rect_index = None
+
         self.merge_mode = False
         self.dragging_point_index = None
         self.selected_point_index = None
@@ -60,27 +63,46 @@ class OpacityCurveCanvas(FigureCanvas):
         self.mpl_connect("button_release_event", self._on_release)
 
     def _on_pick(self, evt):
-        if self.merge_mode or evt.artist is not self.scatter:
+        if self.merge_mode:
             return
-        idx = int(evt.ind[0])
+
+        artist = evt.artist
         mouse = evt.mouseevent
-        if mouse.button == 1:  # 左鍵拖曳起點
-            self.dragging_point_index = idx
-            self.selected_point_index = idx
-            self._notify_change()
-        elif mouse.button == 3:  # 右鍵刪除
-            if idx not in (0, len(self.points) - 1):
-                self.points.pop(idx)
-                self.selected_point_index = None
+
+        if artist in self.rectangles:
+            idx = self.rectangles.index(artist)
+            if mouse.button == 1:
+                self.dragging_rect_index = idx
+            elif mouse.button == 3:
+                self.curve_list.pop(idx)
+                rect = self.rectangles.pop(idx)
+                rect.remove()
+                self.dragging_rect_index = None
                 self._notify_change()
+
+        if artist is self.scatter:
+            idx = int(evt.ind[0])
+            if mouse.button == 1:  # 左鍵拖曳起點
+                self.dragging_point_index = idx
+                self.selected_point_index = idx
+                self._notify_change()
+            elif mouse.button == 3:  # 右鍵刪除
+                if idx not in (0, len(self.points) - 1):
+                    self.points.pop(idx)
+                    self.selected_point_index = None
+                    self._notify_change()
 
     def _on_click(self, evt):
         """
         只處理左鍵 + 在軸內 + 未 pick 到點 的情況：新增控制點
         """
+        if self.dragging_rect_index is not None:
+            # Already dragging a rectangle → ignore
+            return
         if not (not self.merge_mode and evt.inaxes == self.ax and evt.button == 1):
             return
         # 若不是點在既有點上（pick_event 不會設定 dragging_idx），就新增
+
         if (
             self.dragging_point_index is None
             and evt.xdata is not None
@@ -97,6 +119,23 @@ class OpacityCurveCanvas(FigureCanvas):
 
     def _on_drag(self, event):
         # 若無拖曳點或滑鼠不在軸內直接返回
+        self._drag_rectangle(event)
+        self._drag_point(event)
+
+    def _drag_rectangle(self, event):
+        if self.dragging_rect_index is None or event.inaxes != self.ax:
+            return
+        # Clamp within x‑range
+        curve = self.curve_list[self.dragging_rect_index]
+        if event.xdata is not None:
+            curve["mean"] = float(np.clip(event.xdata, self.x_min, self.x_max))
+
+        if event.ydata is not None:
+            curve["amp"] = float(np.clip(event.ydata, 0.0, 1.0))
+
+        self._notify_change()
+
+    def _drag_point(self, event):
         if self.dragging_point_index is None or event.inaxes != self.ax:
             return
 
@@ -121,6 +160,10 @@ class OpacityCurveCanvas(FigureCanvas):
         self._notify_change()
 
     def _on_release(self, event):
+
+        if self.dragging_rect_index is not None:
+            self.dragging_rect_index = None
+
         if self.dragging_point_index is not None and event.ydata is None:
             x_point = self.points[self.selected_point_index][0]
             if event.y > 0:
@@ -128,8 +171,7 @@ class OpacityCurveCanvas(FigureCanvas):
             elif event.y < 0:
                 self.set_point(self.selected_point_index, x_point, 0)
             self._notify_change()
-
-        self.dragging_point_index = None
+            self.dragging_point_index = None
 
     def set_point(self, select_index, new_x, new_y):
         _, _, color = self.points[select_index]
@@ -165,13 +207,20 @@ class OpacityCurveCanvas(FigureCanvas):
                 if curve_data["type"] == "normal_curve":
                     mean: float = curve_data["mean"]
                     std: float = curve_data["std"]
+                    amp = curve_data.get("amp", 1.0)
                     ys_values: list[float] = [
-                        self.get_normal_y(x, mean, std) for x in x_values
+                        amp * self.get_normal_y(x, mean, std) for x in x_values
                     ]
                     ys_uniform: list[np.float64] = [
                         line_y + curve_y
                         for line_y, curve_y in zip(ys_values, ys_uniform)
                     ]
+
+            n_channel = cs.shape[1] if cs.ndim == 2 else 1
+            colors_uniform = np.column_stack(
+                [np.interp(x_values, xs, cs[:, ch]) for ch in range(n_channel)]
+            )
+
             segments = [
                 [
                     (x_values[i], np.clip(ys_uniform[i], 0, 1)),
@@ -179,6 +228,7 @@ class OpacityCurveCanvas(FigureCanvas):
                 ]
                 for i in range(len(x_values) - 1)
             ]
+            self.merge_points = list(zip(x_values, ys_uniform, colors_uniform))
         else:
             segments = [
                 [(xs[i], ys[i]), (xs[i + 1], ys[i + 1])] for i in range(len(xs) - 1)
@@ -213,27 +263,41 @@ class OpacityCurveCanvas(FigureCanvas):
         self.normal_lines = []
 
         if self.merge_mode:
+            for rect in self.rectangles:
+                rect.set_visible(False)
             return
 
-        for curve_data in self.curve_list:
+        if len(self.rectangles) < len(self.curve_list):
+            for _ in range(len(self.curve_list) - len(self.rectangles)):
+                rect = patches.Rectangle((0, 0), 0, 0)  # dummy, will set later
+                rect.set_picker(True)
+                self.ax.add_patch(rect)
+                self.rectangles.append(rect)
+        elif len(self.rectangles) > len(self.curve_list):
+            # remove extras
+            for rect in self.rectangles[len(self.curve_list) :]:
+                rect.remove()
+            self.rectangles = self.rectangles[: len(self.curve_list)]
+
+        for idx, curve_data in enumerate(self.curve_list):
             if curve_data["type"] == "normal_curve":
                 mean = curve_data["mean"]
                 std = curve_data["std"]
+                amp = curve_data.get("amp", 1.0)
                 x_values = np.linspace(self.x_min, self.x_max, 200)
-                y_values = [self.get_normal_y(x, mean, std) for x in x_values]
+                y_values = [amp * self.get_normal_y(x, mean, std) for x in x_values]
                 (line,) = self.ax.plot(
                     x_values, y_values, "--", color="gray", alpha=0.8
                 )
-                mid_idx = len(x_values) // 2
                 square_size = 0.05
-                rect = patches.Rectangle(
-                    (x_values[mid_idx], 0),
-                    square_size,
-                    square_size * 2,
-                    color="red",
-                    picker=True,
-                )
-                self.ax.add_patch(rect)
+                rect = self.rectangles[idx]
+                rect.set_visible(True)
+                rect.set_x(mean - square_size / 2)
+                rect.set_y(0)
+                rect.set_width(square_size)
+                rect.set_height(square_size * 2)
+                rect.set_color("red")
+                rect.set_zorder(2)
                 self.normal_lines.append(line)
 
         self.ax.relim()

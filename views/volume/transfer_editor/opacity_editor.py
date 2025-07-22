@@ -20,7 +20,6 @@ class OpacityEditor(QWidget):
         self.max_val = 1
         self.points = [(self.min_val, 0.0, (0, 0, 1)), (self.max_val, 1.0, (1, 0, 0))]
         self.curve_list = []
-        self.is_merged = False
         self.original_points = self.points.copy()
 
         self._init_ui()
@@ -93,7 +92,10 @@ class OpacityEditor(QWidget):
         self.points = self.canvas.points
 
     def get_points(self):
-        return self.points
+        if self.canvas.merge_mode:
+            return self.canvas.merge_points
+        else:
+            return self.points
 
     def get_select_points(self):
         return self.canvas.selected_point_index
@@ -105,7 +107,7 @@ class OpacityEditor(QWidget):
             self._update_plot()
 
     def clear_points(self):
-        if self.is_merged:
+        if self.canvas.merge_mode:
             return
         self.points = [self.points[0], self.points[-1]]
         self._update_plot()
@@ -119,7 +121,6 @@ class OpacityEditor(QWidget):
     def toggle_merge(self):
         self.canvas.merge_mode = not self.canvas.merge_mode
         self._update_plot()
-        # 還沒實現
 
     def get_init_state(self, min_val, max_val):
         self.canvas.set_range(min_val, max_val)
