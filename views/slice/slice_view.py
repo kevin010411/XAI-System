@@ -151,6 +151,7 @@ class SliceView(QWidget):
             for lyr in layers:
                 img: nib.Nifti1Image = lyr["img"]
                 arr = np.transpose(nib.as_closest_canonical(img).get_fdata(), (2, 1, 0))
+                arr = np.clip(arr, lyr["vmin"], lyr["vmax"])
                 self.layers.append(
                     {
                         "img_name": lyr["img_name"],

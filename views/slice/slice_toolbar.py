@@ -61,8 +61,10 @@ class SliceToolBar(QWidget):
             sig.connect(self._on_model_data_changed)
 
         slice_panel.display_mode_selector.currentIndexChanged.connect(
-            self._on_slice_display_change
+            self._on_slice_setting_change
         )
+        slice_panel.min_val_spin.valueChanged.connect(self._on_slice_setting_change)
+        slice_panel.max_val_spin.valueChanged.connect(self._on_slice_setting_change)
 
         # Three placeholder rows, could be dynamic.
         self.row1 = SliceControlRow(self.img_name_list_model)
@@ -171,13 +173,15 @@ class SliceToolBar(QWidget):
                 "img": self.slice_panel.data_manager.get_img(data["img_name"]),
                 "opacity": data["opacity"],
                 "cmap": setting[data["img_name"]]["mode"],
+                "vmin": setting[data["img_name"]]["vmin"],
+                "vmax": setting[data["img_name"]]["vmax"],
             }
             for data in row_data
             if data["img_name"] != ""
         ]
         self.slice_view.update(show_data)
 
-    def _on_slice_display_change(self):
+    def _on_slice_setting_change(self):
         img_name = self.slice_panel.img_selector.currentText()
         if img_name == "":
             return

@@ -27,23 +27,22 @@ class SlicePanel(BasePanel):
         mode_row.addWidget(QLabel("顯示模式："))
         self.display_mode_selector = QComboBox()
         self.display_mode_selector.addItems(self._DISPLAY_MODES)
-        self.display_mode_selector.currentIndexChanged.connect(
-            self._on_disply_index_changed
-        )
+        self.display_mode_selector.currentIndexChanged.connect(self._on_setting_changed)
         mode_row.addWidget(self.display_mode_selector, 1)
         self.add_row_above_stretch(mode_row)
 
-        # -------------------------- window row
-        # TODO 最大最小值裁減目前每有作用
+        # ---------- window row -------------
         window_row = QHBoxLayout()
         window_row.addWidget(QLabel("Window Min-Max："))
 
         self.min_val_spin = QDoubleSpinBox()
         self.min_val_spin.setDecimals(2)
+        self.min_val_spin.valueChanged.connect(self._on_setting_changed)
         window_row.addWidget(self.min_val_spin)
 
         self.max_val_spin = QDoubleSpinBox()
         self.max_val_spin.setDecimals(2)
+        self.max_val_spin.valueChanged.connect(self._on_setting_changed)
         window_row.addWidget(self.max_val_spin)
 
         self.add_row_above_stretch(window_row)
@@ -146,5 +145,5 @@ class SlicePanel(BasePanel):
             for s in self.data_manager.img_name_list_model.stringList()
         ]
 
-    def _on_disply_index_changed(self, index: int):
+    def _on_setting_changed(self, index: int):
         self.save_setting(self._current_key)
