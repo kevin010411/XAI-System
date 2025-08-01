@@ -18,7 +18,7 @@ def _spatial_mean(t: torch.Tensor) -> torch.Tensor:
 
 
 @XAI.register_module()
-class SlidingGradCAM3D:
+class SlidingSegGradCAM:
     """Grad‑CAM callback set for sliding‑window pipeline.
 
     Parameters

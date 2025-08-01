@@ -5,7 +5,7 @@ import torch
 import nibabel as nib
 from .custom_module.utils import build_model, build_transform
 from .custom_module.utils import sliding_window_inference
-from .custom_module.xai import SlidingGradCAM3D
+from .custom_module.xai import SlidingSegGradCAM
 
 # from monai.inferers import sliding_window_inference
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     transform_data = (
         (transform_data[None, None, ...]).to("cuda").to(torch.float32)
     )  # 增加一個維度
-    xai = SlidingGradCAM3D(
+    xai = SlidingSegGradCAM(
         model=model,
         target_layers=[model.bottleneck, model.out_block],
         class_selector=lambda p: torch.tensor([[1]]),  # 產兩個類別 heatmap

@@ -2,7 +2,7 @@ _base_ = ["./xai/SlidingGradCAM3D.py"]
 
 pretrain_path = "./views/segmentation_models/weights/exp_12_4_4_3/best_model.pth"
 model = dict(
-    type="TESTNET",
+    type="UnetCNX",
     out_channels=2,
     patch_size=2,
     kernel_size=7,

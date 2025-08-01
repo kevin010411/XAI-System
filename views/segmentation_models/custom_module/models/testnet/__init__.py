@@ -1,3 +1,3 @@
-from .testnet import TESTNET
+from .testnet import testnet
 
-__all__ = ["TESTNET"]
+__all__ = ["testnet"]

@@ -411,6 +411,7 @@ def sliding_window_inference(
             [inputs[b, :, *s].to(sw_device, non_blocking=True) for b, s in patch_slices]
         )
 
+        # >>> XAI pre‑patch hook <<<
         if xai_pre_patch is not None:
             xai_pre_patch(patches, patch_slices, done_units)
 

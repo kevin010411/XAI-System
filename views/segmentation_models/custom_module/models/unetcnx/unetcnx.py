@@ -1,16 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-from torchvision.ops.stochastic_depth import StochasticDepth
 
 from timm.models.layers import trunc_normal_
 
+from monai.networks.blocks import UnetrBasicBlock, UnetrUpBlock, UnetOutBlock
 
-from monai.networks.blocks import UnetrBasicBlock, UnetOutBlock
-
-from .blocks.test_block import UnetrUpBlock
-from .blocks.inceptionnext_v2 import InceptionNeXtBlock_V2
+from .blocks.convnext_v2 import ConvNeXtBlock_V2
 from .blocks.utils import LayerNorm
 from .blocks.cbam import CBAM
 from .blocks.eca import ECA
@@ -20,7 +15,7 @@ from ...utils import MODELS
 
 
 @MODELS.register_module()
-class testnet(nn.Module):
+class UNetCNX(nn.Module):
     def __init__(
         self,
         in_channels=1,
@@ -48,7 +43,7 @@ class testnet(nn.Module):
         else:
             first_feature_size = feature_sizes[0]
 
-        decoder_norm_name = "batch"
+        decoder_norm_name = "instance"
         res_block = True
         spatial_dims = 3
 
@@ -77,9 +72,7 @@ class testnet(nn.Module):
         self.skip_encoder_name = skip_encoder_name
         if self.skip_encoder_name == "cbam":
             print("use skip encoder: cbam")
-            self.skip_encoder0 = (
-                nn.Identity()
-            )  # CBAM(feature_sizes[0], reduction=16, kernel_size=7)
+            self.skip_encoder0 = CBAM(feature_sizes[0], reduction=16, kernel_size=7)
             self.skip_encoder1 = CBAM(feature_sizes[0], reduction=16, kernel_size=7)
             self.skip_encoder2 = CBAM(feature_sizes[1], reduction=16, kernel_size=7)
             self.skip_encoder3 = CBAM(feature_sizes[2], reduction=16, kernel_size=7)
@@ -158,22 +151,6 @@ class testnet(nn.Module):
             self.skip_encoder3 = ConvAttnWideFocusBlock(feature_sizes[2])
             self.skip_encoder4 = ConvAttnWideFocusBlock(feature_sizes[3])
 
-        self.bottleneck = nn.Sequential(
-            LayerNorm(feature_sizes[3], eps=1e-6, data_format="channels_first"),
-            nn.Conv3d(feature_sizes[3], feature_sizes[3] * 2, kernel_size=2, stride=2),
-            CBAM(feature_sizes[3] * 2, reduction=16, kernel_size=7),
-        )
-
-        self.decoder5 = UnetrUpBlock(
-            spatial_dims=spatial_dims,
-            in_channels=feature_sizes[3] * 2,
-            out_channels=feature_sizes[3],
-            kernel_size=3,
-            upsample_kernel_size=2,
-            norm_name=decoder_norm_name,
-            res_block=res_block,
-        )
-
         self.decoder4 = UnetrUpBlock(
             spatial_dims=spatial_dims,
             in_channels=feature_sizes[3],
@@ -245,13 +222,28 @@ class testnet(nn.Module):
         enc3 = hidden_states_out[2]
         enc4 = hidden_states_out[3]
 
-        bn = self.bottleneck(enc4)
+        if self.skip_encoder_name:
+            enc0 = self.skip_encoder0(enc0)
+            enc1 = self.skip_encoder1(enc1)
+            enc2 = self.skip_encoder2(enc2)
+            enc3 = self.skip_encoder3(enc3)
+            enc4 = self.skip_encoder4(enc4)
 
-        dec5 = self.decoder5(bn, enc4)
-        dec4 = self.decoder4(dec5, enc3)
+        # print('e0:', enc0.shape)
+        # print('e1:', enc1.shape)
+        # print('e2:', enc2.shape)
+        # print('e3:', enc3.shape)
+        # print('e4:', enc4.shape)
+
+        dec4 = self.decoder4(enc4, enc3)
         dec3 = self.decoder3(dec4, enc2)
         dec2 = self.decoder2(dec3, enc1)
         dec1 = self.decoder1(dec2, enc0)
+
+        # print('d4:', dec4.shape)
+        # print('d3:', dec3.shape)
+        # print('d2:', dec2.shape)
+        # print('d1:', dec1.shape)
 
         out = self.out_block(dec1)
 
@@ -335,7 +327,7 @@ class Backbone(nn.Module):
         for i in range(4):
             stage = nn.Sequential(
                 *[
-                    InceptionNeXtBlock_V2(
+                    ConvNeXtBlock_V2(
                         dim=feature_sizes[i],
                         kernel_size=kernel_size,
                         exp_rate=exp_rate,
@@ -356,7 +348,6 @@ class Backbone(nn.Module):
         outs = []
         for i in range(4):
             x = self.downsample_layers[i](x)
-            # print(x.shape)
             x = self.stages[i](x)
             outs.append(x)
         return outs

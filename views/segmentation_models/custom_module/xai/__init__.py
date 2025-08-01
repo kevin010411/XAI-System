@@ -1,3 +1,3 @@
-from .sliding_GradCAM3D import SlidingGradCAM3D
+from .sliding_seg_grad_cam import SlidingSegGradCAM
 
-__all__ = ["SlidingGradCAM3D"]
+__all__ = ["SlidingSegGradCAM"]
