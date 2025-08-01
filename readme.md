@@ -4,13 +4,58 @@
 
 1. 選擇要觀看哪個class結果與可解釋AI
 
-## 目的
+## Quick Start
 
-## 目前架構
+⚠️ 本專案使用uv幫助管理套件，所以請先依照[uv](https://github.com/astral-sh/uv)的安裝方式安裝uv
 
-## 擁有功能
+### 0. 預訓練權重下載
 
-## 待完成功能
+unectcnx : https://drive.google.com/file/d/1yw-pIr7J0iH8vJYg0q8y2XpK5fcFlSo-/view?usp=drive_link
+testnet : https://drive.usercontent.google.com/download?id=1wQGbr3Y9D1A2q4iwIMwNOzadoiqyw2E-&export=download&authuser=0 
+
+資料目前僅支援nii.gz格式，如果有其他格式也請發布issue，會盡快支援🤡
+
+### 1. 安裝venv
+
+```bash
+uv python install 3.12
+```
+
+### 2. 安裝依賴
+
+```bash
+uv sync
+```
+
+模型的預訓練參數請從這裡下載
+然後views\segmentation_models\configs中的每個檔案需要設定你下載的預訓練權重位置
+以下是其中一個例子
+
+#### views\segmentation_models\configs\unetcnx.py
+
+```python
+_base_ = ["./xai/SlidingGradCAM3D.py"]
+
+pretrain_path = "預訓練權重位置.pth"
+model = dict(
+    type="UnetCNX",
+    out_channels=2,
+    patch_size=2,
+    kernel_size=7,
+    exp_rate=4,
+    feature_size=48,
+    depths=[3, 3, 9, 3],
+    drop_path_rate=0.1,
+    deep_sup=True,
+)
+# ...
+```
+
+### 3. 執行
+
+```bash
+uv run main.py
+```
 
 ## When & How/Why & What
 
@@ -85,9 +130,7 @@ Grad-CAM的熱力圖是一個本來就有關注度的數值的3D資料，但需�
 2. 針對熱力圖使用ROI Mask，對高強度地方有高亮度和細節
 
 
-## 可參考內容
-
-### UI 介面
+## 參考程式
 
 napari : 專為 N-dimensional 醫學與生醫資料打造的 Python 視覺化平台
 3D Slicer : 醫學影像的開源程式
