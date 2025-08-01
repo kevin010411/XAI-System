@@ -7,7 +7,7 @@ import nibabel as nib
 from ...segmentation_models.custom_module import (
     sliding_window_inference,
     build_xai,
-    SlidingGradCAM3D,
+    SlidingSegGradCAM,
 )
 
 
@@ -51,7 +51,7 @@ class PredictWorker(QThread):
             self.xai.set_class(lambda p: torch.tensor([[1]]))
         except:
             print("XAI method not set correctly, using SlidingGradCAM3D as default.")
-            self.xai = SlidingGradCAM3D(
+            self.xai = SlidingSegGradCAM(
                 model=model,
                 target_layers=[model.bottleneck, model.out_block],
                 class_selector=lambda p: torch.tensor([[1]]),  # 產兩個類別 heatmap

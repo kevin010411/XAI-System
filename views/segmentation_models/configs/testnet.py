@@ -1,4 +1,4 @@
-_base_ = ["./xai/SlidingGradCAM3D.py"]
+_base_ = ["./xai/sliding_seg_grad_cam.py"]
 
 pretrain_path = "./views/segmentation_models/weights/exp_12_4_4_3/best_model.pth"
 model = dict(

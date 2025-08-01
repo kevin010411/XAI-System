@@ -1,10 +1,10 @@
-_base_ = ["./xai/SlidingGradCAM3D.py"]
+_base_ = ["./xai/sliding_seg_grad_cam.py"]
 
-pretrain_path = "./views/segmentation_models/weights/exp_12_4_4_3/best_model.pth"
+pretrain_path = "./views/segmentation_models/weights/unetcnx.pth"
 model = dict(
-    type="UnetCNX",
+    type="UNetCNX",
     out_channels=2,
-    patch_size=2,
+    patch_size=4,
     kernel_size=7,
     exp_rate=4,
     feature_size=48,
