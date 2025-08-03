@@ -32,6 +32,10 @@ class InitPanel(BasePanel):
         load_data_button.clicked.connect(self.load_nifti)
         self.layout.addWidget(load_data_button)
         # 添加刪除目前影像按鈕
+        save_delete = QPushButton("儲存目前影像")
+        save_delete.clicked.connect(self.save_current_img)
+        self.layout.addWidget(save_delete)
+        # 添加刪除目前影像按鈕
         btn_delete = QPushButton("刪除目前影像")
         btn_delete.clicked.connect(self.delete_current_img)
         self.layout.addWidget(btn_delete)
@@ -61,6 +65,27 @@ class InitPanel(BasePanel):
         if reply != QMessageBox.Yes:
             return
         self.data_manager.remove_img(self.data_manager.current_key)
+
+    def save_current_img(self):
+        """儲存目前選擇的影像。"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "選擇 NIfTI 檔案", "", "NIfTI Files (*.nii.gz *.nii)"
+        )
+        if file_path is None or file_path == "":
+            return
+        if not (file_path.endswith(".nii") or file_path.endswith(".nii.gz")):
+            file_path += ".nii.gz"  # 或 .nii
+
+        reply = QMessageBox.question(
+            self,
+            "確認儲存",
+            f"確定要儲存「{self.img_selector.currentText()}」至 {file_path}？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.data_manager.save_nifti(file_path, self.img_selector.currentText())
 
     def on_img_selected(self, index: int):
         """使用者在下拉選了新影像 → 通知 DataManager。"""

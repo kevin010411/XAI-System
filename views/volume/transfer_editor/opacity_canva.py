@@ -118,7 +118,6 @@ class OpacityCurveCanvas(FigureCanvas):
             self._notify_change()
 
     def _on_drag(self, event):
-        # 若無拖曳點或滑鼠不在軸內直接返回
         self._drag_rectangle(event)
         self._drag_point(event)
 
@@ -171,7 +170,7 @@ class OpacityCurveCanvas(FigureCanvas):
             elif event.y < 0:
                 self.set_point(self.selected_point_index, x_point, 0)
             self._notify_change()
-            self.dragging_point_index = None
+        self.dragging_point_index = None
 
     def set_point(self, select_index, new_x, new_y):
         _, _, color = self.points[select_index]

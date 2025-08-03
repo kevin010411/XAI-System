@@ -170,8 +170,9 @@ class ModelPanel(BasePanel):
         """處理預測結果"""
         self.predict_button.setEnabled(True)
         pred_img, heat_maps = result
-        for layer_name, heatmap in heat_maps:
-            self.data_manager.add_img(f"heatmap-{layer_name}", heatmap)
+        if heat_maps is not None:
+            for layer_name, heatmap in heat_maps:
+                self.data_manager.add_img(f"heatmap-{layer_name}", heatmap)
         self.data_manager.add_img("predicted", pred_img)
 
     @Slot(object)

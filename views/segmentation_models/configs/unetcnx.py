@@ -32,6 +32,6 @@ valid_transform = dict(
 
 
 norm_name = "layer"
-roi_x = 64
-roi_y = 64
+roi_x = 128
+roi_y = 128
 roi_z = 64

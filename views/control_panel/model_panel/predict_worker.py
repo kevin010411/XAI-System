@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import nibabel as nib
 
+# from monai.inferers import sliding_window_inference
+
 from ...segmentation_models.custom_module import (
     sliding_window_inference,
     build_xai,
@@ -72,9 +74,9 @@ class PredictWorker(QThread):
                     roi_size=[self.config.roi_x, self.config.roi_y, self.config.roi_z],
                     sw_batch_size=1,
                     predictor=self.model,
-                    overlap=0.25,
-                    # progress=True,
-                    pbar=self.pbar,
+                    overlap=0,
+                    progress=True,
+                    # pbar=self.pbar,
                     xai_pre_patch=self.xai.pre,
                     xai_post_patch=self.xai.post,
                     xai_final=self.xai.final,
@@ -83,6 +85,7 @@ class PredictWorker(QThread):
                     torch.argmax(pred, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
                 )
                 pred_img = nib.Nifti1Image(mask, img_t.affine, header=img_t.header)
+                pred_img, _ = self.transform.inverse(pred_img, pred_img.get_fdata())
                 _, heatmaps = self.xai.output
                 heat_imgs = [
                     (
@@ -94,6 +97,10 @@ class PredictWorker(QThread):
                         ),
                     )
                     for layer_name, heatmap in heatmaps.items()
+                ]
+                heat_imgs = [
+                    (layer_name, self.transform.inverse(img, img.get_fdata())[0])
+                    for (layer_name, img) in heat_imgs
                 ]
                 pred_img = (pred_img, heat_imgs)
         except Exception as e:

@@ -32,6 +32,15 @@ class DataManager:
             self.add_img_name_to_list_model(name)
         self.set_current(name)
 
+    def save_nifti(self, file_path, img_name):
+        """儲存目前選擇的影像到指定路徑"""
+        if img_name in self.imgs:
+            img = self.imgs[img_name]
+            nib.save(img, file_path)
+            print(f"影像 {img_name} 已儲存到 {file_path}")
+        else:
+            print(f"影像 {img_name} 不存在，無法儲存。")
+
     def set_current(self, key):
         if key in self.imgs:
             self.current_key = key
