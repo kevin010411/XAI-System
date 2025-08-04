@@ -1,20 +1,19 @@
 from logging import warning
 from collections import defaultdict
 from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Literal
+from pathlib import Path
 
 import torch
 from torch import Tensor
 import torch.nn.functional as F
 
 from ..utils import mem_watch, XAI
+from ..utils.cache import PatchCache, RAMCache, DiskCache
 
 # -------------------------------------------------------------
 # Helper – spatial averaging over N dims (2D or 3D)
 # -------------------------------------------------------------
-
-
-def _spatial_mean(t: torch.Tensor) -> torch.Tensor:
-    return t.mean(dim=tuple(range(2, t.ndim)), keepdim=True)
 
 
 @XAI.register_module()
@@ -43,9 +42,13 @@ class SlidingSegGradCAM:
         self,
         model: torch.nn.Module = None,
         target_layers: Sequence[torch.nn.Module] = None,
+        store_mode: Literal["heat", "raw"] = "heat",  # heat or raw
         *,
         class_selector: Callable[[torch.Tensor], torch.LongTensor] | None = None,
         upsample_mode: str | None = None,
+        patch_cache: PatchCache | None = None,
+        cache: Literal["ram", "disk"] = "ram",
+        cache_dir: str | Path = "cache",
     ) -> None:
         self.model = model
         self.layers = list(target_layers or [])
@@ -53,16 +56,18 @@ class SlidingSegGradCAM:
             lambda p: p.flatten(2).mean(-1).topk(1, dim=1).indices  # [B, 2]
         )
         self.upsample_mode = upsample_mode  # may be None (auto)
-
+        self.store_mode = store_mode
         # caches for every forward pass
         self._acts: Dict[str, torch.Tensor] = {}
         self._grads: Dict[str, torch.Tensor] = {}
         self._handles = {}
 
-        # storage across all patches – {layer_name: [(batch_idx,slice,heat), ...]}
-        self._stash: Dict[str, List[Tuple[int, Tuple[slice, ...], torch.Tensor]]] = (
-            defaultdict(list)
-        )
+        if patch_cache is not None:
+            self.patch_cache = patch_cache
+        else:
+            self.patch_cache = (
+                RAMCache() if cache == "ram" else DiskCache(Path(cache_dir))
+            )
 
         if self.layers is not None:
             # register hooks --------------------------------------------------
@@ -100,31 +105,25 @@ class SlidingSegGradCAM:
 
             for lname, act in self._acts.items():
                 grad: Tensor = self._grads[lname]
-                w: Tensor = _spatial_mean(grad)  # (B, C, 1, 1[,1])
-                heat: Tensor = F.relu((w * act).sum(dim=1, keepdim=True))  # (B,1,*)
 
-                # Spatial upsample to match pred resolution
-                mode = self.upsample_mode
-                if mode is None:
-                    mode = "trilinear" if heat.ndim == 5 else "bilinear"
-
-                heat = F.interpolate(
-                    heat,
-                    size=preds.shape[2:],
-                    mode=mode,
-                    align_corners=False,
-                )
-                # normalise per‑sample
-                axes = tuple(range(2, heat.ndim))
-                h_min = heat.amin(dim=axes, keepdim=True)
-                h_max = heat.amax(dim=axes, keepdim=True)
-                heat_norm = (heat - h_min) / (h_max - h_min + 1e-8)
-
-                # stash each sample‑heatmap + slice
-                for i, (_, slc) in enumerate(patch_slices):
-                    self._stash[lname].append(
-                        (i, slc, heat_norm[i].detach().cpu())
-                    )  # append (patch_idx,slice,heatmap)
+                if self.store_mode == "heat":
+                    heat = self._to_heat(act, grad)
+                    for i, (_, slc) in enumerate(patch_slices):
+                        self.patch_cache.add(
+                            lname, i, slc, heat[i].cpu(), preds.shape[2:]
+                        )
+                else:  # raw
+                    for i, (_, slc) in enumerate(patch_slices):
+                        self.patch_cache.add(
+                            lname,
+                            i,
+                            slc,
+                            (
+                                act[i].detach().cpu().half(),
+                                grad[i].detach().cpu().half(),
+                            ),
+                            preds.shape[2:],
+                        )
 
     def final(self, results):  # noqa: D401 – simple hook
         """Stitch heat‑maps & expose ``self.output``."""
@@ -137,16 +136,52 @@ class SlidingSegGradCAM:
             B, _, *spatial = any_tensor.shape
 
         stitched: Dict[str, torch.Tensor] = {}
-        for lname, items in self._stash.items():
+        for lname in self.patch_cache.layers():
             canvas = torch.zeros((B, 1, *spatial))
             count = torch.zeros_like(canvas)
-            for b_idx, slc, heat in items:
-                canvas[(b_idx, slice(None), *slc)] += heat
-                count[(b_idx, slice(None), *slc)] += 1
+            for b_idx, slc, data in self.patch_cache.iter(lname):
+                if self.store_mode == "heat":
+                    heat = data  # already (1,*)
+                else:  # raw → recompute
+                    act, grad, pred_shape = data
+                    heat = self._to_heat(act.unsqueeze(0), grad.unsqueeze(0))[0]
+
+                # ---- dynamic upsample if needed ----
+                if heat.shape[2:] != tuple(spatial):
+                    mode = self.upsample_mode or (
+                        "trilinear" if heat.ndim == 5 else "bilinear"
+                    )
+                    heat = F.interpolate(
+                        heat, size=pred_shape, mode=mode, align_corners=False
+                    )
+
+                    canvas[(b_idx, slice(None), *slc)] += heat
+                    count[(b_idx, slice(None), *slc)] += 1
+
             stitched[lname] = canvas / count.clamp_min(1e-6)
 
         # provide combined output
         self.output = (results, stitched)
+        return self.output
+
+    def recompute(self):
+        """Stitch heat‑maps again *without* forward/backward (cache only)."""
+        if self.output is None:
+            raise RuntimeError("No previous forward results.  Run a slide once first.")
+        results, _ = self.output
+        return self.final(results)
+
+    def _spatial_mean(t: torch.Tensor) -> torch.Tensor:
+        return t.mean(dim=tuple(range(2, t.ndim)), keepdim=True)
+
+    def _to_heat(self, act: Tensor, grad: Tensor) -> Tensor:  # act/grad (B,C,*)
+        w = self._spatial_mean(grad)  # (B,C,1,1[,1])
+        heat = F.relu((w * act).sum(dim=1, keepdim=True))
+        axes = tuple(range(2, heat.ndim))
+        h_min, h_max = heat.amin(dim=axes, keepdim=True), heat.amax(
+            dim=axes, keepdim=True
+        )
+        return (heat - h_min) / (h_max - h_min + 1e-8)
 
     def set_model(self, model: torch.nn.Module):
         self.model = model
