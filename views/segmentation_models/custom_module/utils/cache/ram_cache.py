@@ -16,13 +16,12 @@ class RAMCache(PatchCache):
     def add(
         self,
         layer: str,
-        b_idx: int,
         slc: Slice,
         tensor: torch.Tensor,
         shape: tuple[int, int],
     ) -> None:
         # 轉 CPU + half() 節省記憶體（可按需調整）
-        self._store[layer].append((b_idx, slc, tensor.detach().cpu().half()), shape)
+        self._store[layer].append((slc, tensor, shape))
 
     # ---------- 讀取 ----------
     def iter(self, layer: str):

@@ -93,10 +93,7 @@ class VolumePanel(BasePanel):
             print(
                 "⚠️新的img_name，進入這裡會預設資料但會切換過早會造成BUG請找到為什麼並避免"
             )
-            volume = self._current_img.get_fdata()
-            self.opacity_editor.clear_points()
-            self.opacity_editor.set_range(volume.min(), volume.max())
-            self.histogram_viewer.set_histogram(volume)
+            self._create_init_setting(self._current_img, new_key)
 
     def histogram_done(self, calculated_histo, img_name, init_opacity_editor, init_vis):
         init_setting = {

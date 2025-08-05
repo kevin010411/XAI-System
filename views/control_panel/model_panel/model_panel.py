@@ -19,6 +19,7 @@ from ...segmentation_models.custom_module import (
 )
 from .predict_worker import PredictWorker
 from .target_layer_list import TargetLayerList
+from .xai_subpanel import create_xai_panel
 
 
 class ModelPanel(BasePanel):
@@ -57,18 +58,19 @@ class ModelPanel(BasePanel):
         self.transform = None
         self.config: Config | None = None
         self.xai_config: Config | None = None
+        self.worker = None
 
         self.info_box = CollapsibleBox("模型資訊")
         self.layout.insertWidget(self._stretch_idx, self.info_box)
         self._stretch_idx += 1
 
-        predict_group = QVBoxLayout()
+        self.predict_group = QVBoxLayout()
         self.predict_button = QPushButton("開始預測")
         self.predict_button.clicked.connect(self.on_predict_clicked)
-        predict_group.addWidget(self.predict_button)
+        self.predict_group.addWidget(self.predict_button)
         self.progress_bar = ProgressBar()
-        predict_group.addWidget(self.progress_bar)
-        self.add_row_above_stretch(predict_group)
+        self.predict_group.addWidget(self.progress_bar)
+        self.add_row_above_stretch(self.predict_group)
 
     def load_config_list(self, model_path, selector: QComboBox):
         from pathlib import Path
@@ -105,8 +107,19 @@ class ModelPanel(BasePanel):
 
     def on_xai_selected(self, index: int):
         xai_config_path = self.xai_select.itemData(index)
-        if xai_config_path is not None:
-            self.xai_config = Config.fromfile(xai_config_path)["xai_method"]
+        if xai_config_path is None:
+            return
+
+        self.xai_config = Config.fromfile(xai_config_path)["xai_method"]
+        if getattr(self, "xai_config_group", None) is not None:
+            self.predict_group.removeWidget(self.xai_config_group)
+            self.xai_config_group.deleteLater()
+            self.xai_config_group = None
+
+        new_group = self.create_xai_config_widget()
+        self.xai_config_group = new_group
+        if new_group is not None:
+            self.predict_group.addWidget(self.xai_config_group)
 
     def populate_info_box(self, config_path, model) -> None:  # type: ignore[no-any-unimported]
         """Fill collapsible box with human‑readable model details."""
@@ -142,6 +155,22 @@ class ModelPanel(BasePanel):
 
         return group
 
+    def create_xai_config_widget(self):
+        group = QGroupBox("XAI Config")
+        group.setCheckable(True)
+        group.setChecked(True)
+
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.xai_config_widget = create_xai_panel(self.xai_config)
+        if self.xai_config_widget is None:
+            return group
+        self.xai_config_widget.set_change_callback(self.on_xai_config_changed)
+        group_layout.addWidget(self.xai_config_widget)
+
+        return group
+
     def on_img_change(self, index: int):
         new_img_name = self.img_selector.currentText()
         self.img = self.data_manager.get_img(new_img_name)
@@ -161,7 +190,8 @@ class ModelPanel(BasePanel):
             xai_config=self.xai_config,
         )
         self.worker.pred_done.connect(self.on_predict_done)
-        self.worker.finished.connect(self._cleanup_worker)
+        self.worker.compute_done.connect(self.on_predict_done)
+        # self.worker.finished.connect(self._cleanup_worker)
         self.worker.update.connect(self.progress_bar.update)
         self.worker.reset.connect(self.progress_bar.reset)
         self.worker.start()
@@ -175,9 +205,15 @@ class ModelPanel(BasePanel):
                 self.data_manager.add_img(f"heatmap-{layer_name}", heatmap)
         self.data_manager.add_img("predicted", pred_img)
 
-    @Slot(object)
+    def on_xai_config_changed(self, config):
+        if not self.predict_button.isEnabled() or self.worker is None:
+            return
+        self.worker.xai.set_param_by_config(config)
+        self.worker.recompute_xai()
+
+    @Slot(object)  # unused 目前需要保留worker去計算不同的內容
     def _cleanup_worker(self, *_):
         # 執行緒結束 → 釋放引用，Qt 也可 deleteLater
-        self.worker.finished.disconnect(self._cleanup_worker)
+        # self.worker.finished.disconnect(self._cleanup_worker)
         self.worker.deleteLater()
         self.worker = None

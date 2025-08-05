@@ -1,6 +1,6 @@
 from logging import warning
 from collections import defaultdict
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Mapping, Sequence, Tuple
 from typing import Literal
 from pathlib import Path
 
@@ -107,7 +107,9 @@ class SlidingSegGradCAM:
                 grad: Tensor = self._grads[lname]
 
                 if self.store_mode == "heat":
-                    heat = self._to_heat(act, grad)
+                    heat = self._to_heat(
+                        act.unsqueeze(0).float(), grad.unsqueeze(0).float()
+                    )
                     for i, (_, slc) in enumerate(patch_slices):
                         self.patch_cache.add(
                             lname, i, slc, heat[i].cpu(), preds.shape[2:]
@@ -116,7 +118,6 @@ class SlidingSegGradCAM:
                     for i, (_, slc) in enumerate(patch_slices):
                         self.patch_cache.add(
                             lname,
-                            i,
                             slc,
                             (
                                 act[i].detach().cpu().half(),
@@ -139,24 +140,29 @@ class SlidingSegGradCAM:
         for lname in self.patch_cache.layers():
             canvas = torch.zeros((B, 1, *spatial))
             count = torch.zeros_like(canvas)
-            for b_idx, slc, data in self.patch_cache.iter(lname):
+            for slc, data, pred_shape in self.patch_cache.iter(lname):
                 if self.store_mode == "heat":
                     heat = data  # already (1,*)
                 else:  # raw → recompute
-                    act, grad, pred_shape = data
-                    heat = self._to_heat(act.unsqueeze(0), grad.unsqueeze(0))[0]
-
+                    act, grad = data
+                    heat = self._to_heat(
+                        act.unsqueeze(0).float(), grad.unsqueeze(0).float()
+                    )[0]
                 # ---- dynamic upsample if needed ----
-                if heat.shape[2:] != tuple(spatial):
+                if heat.shape[2:] != tuple(pred_shape):
                     mode = self.upsample_mode or (
-                        "trilinear" if heat.ndim == 5 else "bilinear"
+                        "trilinear" if heat.ndim == 4 else "bilinear"
                     )
                     heat = F.interpolate(
-                        heat, size=pred_shape, mode=mode, align_corners=False
+                        heat.unsqueeze(0),
+                        size=pred_shape,
+                        mode=mode,
+                        align_corners=False,
                     )
+                    heat = heat.squeeze(0)  # (1,*,*)
 
-                    canvas[(b_idx, slice(None), *slc)] += heat
-                    count[(b_idx, slice(None), *slc)] += 1
+                canvas[(0, slice(None), *slc)] += heat
+                count[(0, slice(None), *slc)] += 1
 
             stitched[lname] = canvas / count.clamp_min(1e-6)
 
@@ -171,11 +177,14 @@ class SlidingSegGradCAM:
         results, _ = self.output
         return self.final(results)
 
-    def _spatial_mean(t: torch.Tensor) -> torch.Tensor:
+    def _spatial_mean(self, t: torch.Tensor) -> torch.Tensor:
         return t.mean(dim=tuple(range(2, t.ndim)), keepdim=True)
 
     def _to_heat(self, act: Tensor, grad: Tensor) -> Tensor:  # act/grad (B,C,*)
-        w = self._spatial_mean(grad)  # (B,C,1,1[,1])
+        w = self._spatial_mean(grad)
+        w = F.interpolate(
+            w, size=act.shape[-3:], mode="trilinear" if w.ndim == 5 else "bilinear"
+        )  # 變回 (B,C,H,W)
         heat = F.relu((w * act).sum(dim=1, keepdim=True))
         axes = tuple(range(2, heat.ndim))
         h_min, h_max = heat.amin(dim=axes, keepdim=True), heat.amax(
@@ -241,7 +250,23 @@ class SlidingSegGradCAM:
         else:
             raise TypeError("target 必須是 nn.Module 或 str")
 
+    def set_param_by_config(self, cfg):
+        if not isinstance(cfg, Mapping):
+            raise TypeError("cfg 必須是 dict / ConfigDict / Mapping 類型")
+        for k, v in cfg.items():
+            if k == "type":
+                continue
+            self._apply_one(self, k, v)
+
     # ----- Utility -----
     @staticmethod
     def _layer_name(layer: torch.nn.Module) -> str:
         return layer.__class__.__name__ + f"@{id(layer):x}"
+
+    @staticmethod
+    def _apply_one(obj, attr: str, value):
+        """把 value 寫進 obj.attr；若不存在就警告。"""
+        if hasattr(obj, attr):
+            setattr(obj, attr, value)
+        else:
+            warning(f"[set_param_by_config] {obj} 無屬性 '{attr}', 已忽略")

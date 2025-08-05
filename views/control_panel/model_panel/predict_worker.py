@@ -31,6 +31,7 @@ class PredictWorker(QThread):
             pass
 
     pred_done = Signal(object)  # emit 結果物件
+    compute_done = Signal(object)  # emit xai計算完成的物件
     update = Signal(int)  # 送出「已完成 n 步」或「目前進度值」
     reset = Signal(int, str)  # 送出「請把進度條重設到 0」
 
@@ -58,6 +59,7 @@ class PredictWorker(QThread):
                 target_layers=[model.bottleneck, model.out_block],
                 class_selector=lambda p: torch.tensor([[1]]),  # 產兩個類別 heatmap
             )
+        self.xai.store_mode = "raw"
         self.pbar = self.ProgressProxy(self.update, self.reset)
 
     def run(self):
@@ -65,7 +67,9 @@ class PredictWorker(QThread):
         執行模型預測與XAI分析
         """
         try:
-            img_t, data_t = self.transform(self.input_data, self.input_data.get_fdata())
+            self.img_t, data_t = self.transform(
+                self.input_data, self.input_data.get_fdata()
+            )
             data_t = data_t[None, None, ...].to(torch.float32).to(self.device)
 
             with torch.enable_grad():
@@ -84,7 +88,9 @@ class PredictWorker(QThread):
                 mask = (
                     torch.argmax(pred, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
                 )
-                pred_img = nib.Nifti1Image(mask, img_t.affine, header=img_t.header)
+                pred_img = nib.Nifti1Image(
+                    mask, self.img_t.affine, header=self.img_t.header
+                )
                 pred_img, _ = self.transform.inverse(pred_img, pred_img.get_fdata())
                 _, heatmaps = self.xai.output
                 heat_imgs = [
@@ -92,8 +98,8 @@ class PredictWorker(QThread):
                         layer_name,
                         nib.Nifti1Image(
                             heatmap.squeeze(0).squeeze(0),
-                            img_t.affine,
-                            header=img_t.header,
+                            self.img_t.affine,
+                            header=self.img_t.header,
                         ),
                     )
                     for layer_name, heatmap in heatmaps.items()
@@ -111,3 +117,36 @@ class PredictWorker(QThread):
                 torch.cuda.empty_cache()
 
         self.pred_done.emit(pred_img)
+
+    def recompute_xai(self):
+        """
+        重新計算 XAI 結果
+        """
+        if self.xai is None:
+            print("XAI method not set.")
+            return
+        pred, heat_maps = self.xai.recompute()
+        mask = torch.argmax(pred, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
+        pred_img = nib.Nifti1Image(mask, self.img_t.affine, header=self.img_t.header)
+        pred_img, _ = self.transform.inverse(pred_img, pred_img.get_fdata())
+        if heat_maps is not None:
+            heat_imgs = [
+                (
+                    layer_name,
+                    nib.Nifti1Image(
+                        heatmap.squeeze(0).squeeze(0),
+                        self.img_t.affine,
+                        header=self.img_t.header,
+                    ),
+                )
+                for layer_name, heatmap in heat_maps.items()
+            ]
+            heat_imgs = [
+                (layer_name, self.transform.inverse(img, img.get_fdata())[0])
+                for (layer_name, img) in heat_imgs
+            ]
+            pred_img = (pred_img, heat_imgs)
+        else:
+            pred_img = (pred_img, None)
+
+        self.compute_done.emit(pred_img)

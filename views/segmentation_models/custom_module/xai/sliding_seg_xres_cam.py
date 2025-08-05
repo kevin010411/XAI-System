@@ -13,7 +13,7 @@ class SlidingSegXResCAM(SlidingSegGradCAM):
     def __init__(
         self, pool_size: int | tuple[int, ...] | None = None, *kwargs  # 新增此參數
     ) -> None:
-        self.__init__(
+        super().__init__(
             *kwargs,
         )
         self.pool_size = pool_size

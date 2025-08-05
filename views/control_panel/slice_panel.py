@@ -134,7 +134,10 @@ class SlicePanel(BasePanel):
             else:
                 self._row_name[row] = new_img_name
                 img = self.data_manager.get_img(new_img_name)
-                self._create_slice_init_setting(img, new_img_name)
+                if img is None:
+                    print(f"{new_img_name}的img不存在")
+                else:
+                    self._create_slice_init_setting(img, new_img_name)
 
     def _on_model_reset(self):
         """

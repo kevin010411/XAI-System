@@ -20,7 +20,6 @@ class DiskCache(PatchCache):
     def add(
         self,
         layer: str,
-        b_idx: int,
         slc: Slice,
         tensor: torch.Tensor,
         shape: tuple[int, int],
@@ -35,7 +34,6 @@ class DiskCache(PatchCache):
         )
         self._meta[layer].append(
             {
-                "b_idx": b_idx,
                 "slice": [(s.start, s.stop) for s in slc],
                 "file": fname,
                 "shape": shape,
@@ -49,11 +47,10 @@ class DiskCache(PatchCache):
         if layer not in self._meta:
             return iter([])
         for rec in self._meta[layer]:
-            b_idx = rec["b_idx"]
             slc = tuple(slice(*pair) for pair in rec["slice"])
             tensor = torch.load(self.root / rec["file"], map_location="cpu")
             shape = rec["shape"]
-            yield (b_idx, slc, tensor, shape)
+            yield (slc, tensor, shape)
 
     def layers(self):
         return list(self._meta.keys())

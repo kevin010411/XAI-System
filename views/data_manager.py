@@ -85,6 +85,10 @@ class DataManager:
         if image_name not in self.imgs:
             self.imgs[image_name] = image_data
             self.add_img_name_to_list_model(image_name)
+        elif image_data is not None:
+            # 如果影像已存在，則更新其資料
+            print(f"影像 {image_name} 已存在，更新其資料。")
+            self.imgs[image_name] = image_data
         for observer in self.observers:
             if isinstance(observer, BasePanel):
                 BasePanel.update(observer, image_data)
